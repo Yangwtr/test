@@ -1,0 +1,949 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>古今同頻｜詩詞互動小書僮</title>
+  <style>
+    :root {
+      --bg: #f6f7fb;
+      --panel: #ffffff;
+      --line: #d9dfeb;
+      --text: #1f2a44;
+      --subtext: #647089;
+      --primary: #4f7cff;
+      --primary-weak: #eaf0ff;
+      --accent: #ff8a65;
+      --success: #2eae6b;
+      --warning: #f0a202;
+      --danger: #db4d4d;
+      --soft-yellow: #fff8de;
+      --soft-green: #eefaf3;
+      --soft-pink: #fff1ee;
+      --shadow: 0 12px 30px rgba(31, 42, 68, 0.08);
+      --radius: 20px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+      background: linear-gradient(180deg, #f7f9ff 0%, #eef3ff 100%);
+      color: var(--text);
+    }
+    button, input, textarea, select { font: inherit; }
+    .hidden { display: none !important; }
+    #app-root {
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr auto auto;
+      gap: 16px;
+      padding: 16px;
+    }
+    #section-topbar,
+    #section-mode-tabs,
+    #section-action-bar,
+    .panel,
+    .card,
+    .option-btn,
+    .toolbar-btn,
+    .mode-tab,
+    .status-pill,
+    .input-shell,
+    .action-btn,
+    .control-btn {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+    #section-topbar,
+    #section-mode-tabs,
+    #section-action-bar {
+      border-radius: 18px;
+      padding: 12px 16px;
+    }
+    #section-topbar {
+      display: grid;
+      grid-template-columns: minmax(280px, 1.2fr) auto auto auto auto;
+      align-items: center;
+      gap: 12px;
+    }
+    #topbar-logo { display: flex; flex-direction: column; gap: 2px; }
+    #text-app-title { margin: 0; font-size: 1.4rem; font-weight: 800; }
+    #text-app-subtitle { margin: 0; font-size: 0.92rem; color: var(--subtext); }
+    #text-current-mode {
+      font-weight: 700;
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: var(--primary-weak);
+      color: var(--primary);
+      text-align: center;
+      white-space: nowrap;
+    }
+    .status-pill {
+      border-radius: 999px;
+      padding: 10px 14px;
+      color: var(--subtext);
+      white-space: nowrap;
+      text-align: center;
+    }
+    .toolbar-btn,
+    .mode-tab,
+    .action-btn,
+    .option-btn,
+    .control-btn {
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: #fff;
+      cursor: pointer;
+      transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+      color: var(--text);
+      font-weight: 700;
+    }
+    .toolbar-btn:hover,
+    .mode-tab:hover,
+    .action-btn:hover,
+    .option-btn:hover,
+    .control-btn:hover { transform: translateY(-1px); box-shadow: 0 8px 18px rgba(31, 42, 68, 0.08); }
+    .toolbar-btn { padding: 10px 16px; }
+    #section-main { display: grid; grid-template-columns: minmax(300px, 0.95fr) minmax(500px, 1.25fr); gap: 16px; min-height: 0; }
+    .panel { border-radius: var(--radius); padding: 18px; min-height: 0; }
+    #section-mascot-stage, #section-task-panel { display: flex; flex-direction: column; gap: 14px; }
+    .section-title { margin: 0; font-size: 1.1rem; font-weight: 800; }
+    .section-desc { margin: 0; color: var(--subtext); line-height: 1.5; }
+    #panel-mascot { flex: 1; display: grid; grid-template-rows: auto 1fr auto auto; gap: 14px; min-height: 560px; }
+    #media-mascot {
+      min-height: 360px;
+      border-radius: 24px;
+      border: 2px dashed var(--line);
+      background: radial-gradient(circle at top, #fffef7 0%, #f8fbff 58%, #edf2ff 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--subtext);
+      text-align: center;
+      padding: 20px;
+      position: relative;
+      overflow: hidden;
+    }
+    #video-mascot, #img-mascot-poster { max-width: 100%; max-height: 100%; border-radius: 18px; }
+    #mascot-glow {
+      position:absolute; inset:auto 18% 6% 18%; height:18%;
+      background: radial-gradient(circle, rgba(79,124,255,0.18) 0%, rgba(79,124,255,0) 70%);
+      pointer-events:none;
+    }
+    #text-mascot-bubble {
+      border-radius: 18px;
+      background: #fffdf6;
+      border: 1px solid #f1e3b0;
+      padding: 14px 16px;
+      line-height: 1.65;
+      font-weight: 600;
+      min-height: 92px;
+    }
+    #status-mascot-state {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: #f6f8fe;
+      color: var(--primary);
+      font-weight: 700;
+      width: fit-content;
+    }
+    #panel-mascot-actions, .inline-actions, .mode-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .control-btn, .action-btn {
+      padding: 10px 14px;
+    }
+    #section-task-panel { overflow: hidden; }
+    #panel-task-content { display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; }
+    #panel-mode-content {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .mode-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-height: 0;
+    }
+    .card {
+      border-radius: 18px;
+      padding: 14px 16px;
+    }
+    .card-title { margin: 0 0 8px; font-size: 0.98rem; font-weight: 800; }
+    .helper-text { color: var(--subtext); font-size: 0.92rem; line-height: 1.55; }
+    .input-shell {
+      border-radius: 16px;
+      padding: 8px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    textarea, input[type="text"], select {
+      width: 100%;
+      border: 1px solid transparent;
+      background: transparent;
+      outline: none;
+      resize: none;
+      color: var(--text);
+    }
+    textarea { min-height: 84px; }
+    .primary-btn { background: var(--primary); color: #fff; }
+    .danger-btn { background: var(--danger); color: #fff; }
+    .soft-btn { background: var(--primary-weak); color: var(--primary); }
+    .result-box {
+      min-height: 120px;
+      white-space: pre-wrap;
+      line-height: 1.75;
+      background: #fbfcff;
+    }
+    .poem-meta-grid {
+      display: grid;
+      grid-template-columns: 100px 1fr;
+      gap: 8px 12px;
+      align-items: start;
+      font-size: 0.95rem;
+      line-height: 1.6;
+    }
+    .poem-meta-grid .label { color: var(--subtext); font-weight: 700; }
+    .mode-options-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .option-btn {
+      text-align: left;
+      padding: 14px 16px;
+      line-height: 1.5;
+      min-height: 72px;
+    }
+    .option-btn.correct { border-color: rgba(46,174,107,.5); background: var(--soft-green); }
+    .option-btn.wrong { border-color: rgba(219,77,77,.45); background: var(--soft-pink); }
+    .media-box {
+      border: 2px dashed var(--line);
+      border-radius: 18px;
+      min-height: 220px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #fbfcff;
+      overflow: hidden;
+      text-align: center;
+      color: var(--subtext);
+      padding: 16px;
+    }
+    .media-box img, .media-box video {
+      max-width: 100%;
+      max-height: 240px;
+      border-radius: 14px;
+    }
+    .reading-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0,1fr));
+      gap: 12px;
+    }
+    .metric-card {
+      border-radius: 18px;
+      padding: 16px;
+      background: #fbfcff;
+      border: 1px solid var(--line);
+    }
+    .metric-value { font-size: 1.15rem; font-weight: 800; margin-top: 8px; }
+    #section-mode-tabs, #section-action-bar {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0,1fr));
+      gap: 10px;
+    }
+    #section-action-bar { grid-template-columns: repeat(5, minmax(0,1fr)); }
+    .mode-tab.active { background: var(--primary); color: #fff; }
+    .footer-note { font-size: 0.84rem; color: var(--subtext); }
+    #engineFrame { width: 0; height: 0; border: 0; position: absolute; left: -9999px; top: -9999px; }
+    @media (max-width: 1120px) {
+      #section-topbar { grid-template-columns: 1fr 1fr; }
+      #section-main { grid-template-columns: 1fr; }
+      #section-mode-tabs, #section-action-bar { grid-template-columns: repeat(2, minmax(0,1fr)); }
+    }
+    @media (max-width: 720px) {
+      #app-root { padding: 12px; }
+      #section-topbar { grid-template-columns: 1fr; }
+      .reading-grid, .mode-options-grid { grid-template-columns: 1fr; }
+      #section-mode-tabs, #section-action-bar { grid-template-columns: 1fr; }
+      .input-shell { flex-direction: column; align-items: stretch; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app-root">
+    <header id="section-topbar">
+      <div id="topbar-logo">
+        <h1 id="text-app-title">古今同頻｜詩詞互動小書僮</h1>
+        <p id="text-app-subtitle">和小書僮一起問詩、玩詩、讀詩、猜詩！</p>
+      </div>
+      <div id="text-current-mode">目前模式：問問公仔</div>
+      <div id="status-mic" class="status-pill">麥克風未開啟</div>
+      <div id="status-camera" class="status-pill">鏡頭未開啟</div>
+      <button id="btn-teacher-mode" class="toolbar-btn">教師模式</button>
+    </header>
+
+    <main id="section-main">
+      <section id="section-mascot-stage" class="panel">
+        <h2 class="section-title">小書僮互動舞台</h2>
+        <p class="section-desc">公仔會依照你正在玩的模式，陪你一起問詩、玩詩、讀詩、猜詩。</p>
+
+        <div id="panel-mascot" class="card">
+          <div id="media-mascot">
+            <video id="video-mascot" autoplay loop muted playsinline poster="assets/mascot-poster.png">
+              <source src="assets/mascot-idle.mp4" type="video/mp4" />
+            </video>
+            <img id="img-mascot-poster" class="hidden" src="assets/mascot-poster.png" alt="小書僮公仔" />
+            <div id="mascot-glow"></div>
+          </div>
+          <div id="text-mascot-bubble">你好呀！今天想先問我，還是讓我考考你呢？</div>
+          <div id="status-mascot-state">待機中</div>
+          <div id="panel-mascot-actions">
+            <button id="btn-global-read-aloud" class="control-btn soft-btn">聽公仔朗讀</button>
+            <button id="btn-global-show-related" class="control-btn">看看相關詩詞</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="section-task-panel" class="panel">
+        <h2 id="text-task-title" class="section-title">今天的詩詞任務</h2>
+        <p id="text-task-desc" class="section-desc">跟著小書僮一起完成挑戰吧！</p>
+
+        <div id="panel-task-content">
+          <div id="panel-mode-content">
+
+            <section id="panel-mode-ask" class="mode-panel">
+              <div class="card">
+                <h3 class="card-title">問問公仔</h3>
+                <p class="helper-text">你可以打字問我，也可以直接說給我聽。</p>
+                <div class="input-shell" style="margin-top:10px;">
+                  <textarea id="input-ask-question" placeholder="請輸入你想問的問題……"></textarea>
+                  <button id="btn-ask-submit" class="control-btn primary-btn">送出問題</button>
+                </div>
+                <div class="inline-actions" style="margin-top:10px;">
+                  <button id="btn-ask-voice-start" class="control-btn primary-btn">開始說話</button>
+                  <button id="btn-ask-voice-stop" class="control-btn danger-btn">停止說話</button>
+                  <button id="btn-ask-voice-chat" class="control-btn">開始語音對話</button>
+                  <button id="btn-ask-read-aloud" class="control-btn">唸給我聽</button>
+                  <button id="btn-ask-reset" class="control-btn">再問一題</button>
+                  <button id="btn-ask-more" class="control-btn">再多說一點</button>
+                </div>
+                <div class="helper-text" id="text-ask-voice-status" style="margin-top:10px;">語音問答待命</div>
+              </div>
+
+              <div class="card result-box" id="text-ask-answer">你的問題送出後，我會在這裡回答你。</div>
+
+              <div id="card-ask-related-poem" class="card">
+                <h3 class="card-title">相關詩詞</h3>
+                <div class="poem-meta-grid">
+                  <div class="label">詩名：</div><div id="text-ask-poem-title">—</div>
+                  <div class="label">包含物：</div><div id="text-ask-poem-objects">—</div>
+                  <div class="label">情緒：</div><div id="text-ask-poem-emotion">—</div>
+                </div>
+              </div>
+            </section>
+
+            <section id="panel-mode-quiz" class="mode-panel hidden">
+              <div class="card">
+                <h3 class="card-title">AI考考我</h3>
+                <p class="helper-text">換我來出題，你來選出正確答案！</p>
+                <div class="inline-actions" style="margin-top:10px;">
+                  <select id="select-quiz-mode">
+                    <option value="random">綜合闖關（隨機）</option>
+                    <option value="recite_next">詩詞接龍大挑戰</option>
+                    <option value="error_spot">AI 抓漏糾察隊</option>
+                    <option value="image_match">AI 點餐你上菜</option>
+                    <option value="mood_recommend">心情安慰推薦</option>
+                    <option value="paraphrase_guess">白話文反推</option>
+                  </select>
+                  <button id="btn-quiz-start" class="control-btn primary-btn">開始闖關</button>
+                  <button id="btn-quiz-next" class="control-btn">下一題</button>
+                  <button id="btn-quiz-read-question" class="control-btn">聽題目朗讀</button>
+                </div>
+                <div class="helper-text" id="text-quiz-score" style="margin-top:10px;">目前得分：0 / 0</div>
+              </div>
+              <div id="card-quiz-question" class="card result-box">
+                <div id="text-quiz-question">載入詩詞資料後，按「開始闖關」就能由 AI 主動出題。</div>
+              </div>
+              <div id="quiz-options-front" class="mode-options-grid"></div>
+              <div id="text-quiz-result" class="card result-box">作答後，這裡會顯示是否答對、原因與修正提醒。</div>
+              <div id="card-quiz-related-poem" class="card">
+                <h3 class="card-title">這一題對應的詩詞</h3>
+                <div class="poem-meta-grid">
+                  <div class="label">詩名：</div><div id="text-quiz-poem-title">—</div>
+                  <div class="label">包含物：</div><div id="text-quiz-poem-objects">—</div>
+                  <div class="label">情緒：</div><div id="text-quiz-poem-emotion">—</div>
+                </div>
+              </div>
+            </section>
+
+            <section id="panel-mode-image" class="mode-panel hidden">
+              <div class="card">
+                <h3 class="card-title">看圖猜詩</h3>
+                <p class="helper-text">把圖片、圖卡或物品拿給我看，我來幫你配一首詩。</p>
+                <div class="inline-actions" style="margin-top:10px;">
+                  <input id="input-image-upload" type="file" accept="image/*" class="hidden" />
+                  <button id="btn-image-upload" class="control-btn">上傳圖片</button>
+                  <button id="btn-image-start" class="control-btn primary-btn">開始辨識</button>
+                  <button id="btn-image-stop" class="control-btn danger-btn">停止辨識</button>
+                  <button id="btn-image-clear" class="control-btn">清除圖片</button>
+                </div>
+              </div>
+              <div id="media-image-preview" class="media-box">請先上傳圖片</div>
+              <div id="text-image-result" class="card result-box">辨識完成後，我會在這裡告訴你我看到了什麼。</div>
+              <div id="card-image-related-poem" class="card">
+                <h3 class="card-title">小書僮推薦的詩詞</h3>
+                <div class="poem-meta-grid">
+                  <div class="label">詩名：</div><div id="text-image-poem-title">—</div>
+                  <div class="label">包含物：</div><div id="text-image-poem-objects">—</div>
+                  <div class="label">情緒：</div><div id="text-image-poem-emotion">—</div>
+                </div>
+                <div class="inline-actions" style="margin-top:10px;">
+                  <button id="btn-image-again" class="control-btn">再看一次</button>
+                  <button id="btn-image-change" class="control-btn">換一張圖片</button>
+                  <button id="btn-image-read-result" class="control-btn">聽公仔解說</button>
+                </div>
+              </div>
+            </section>
+
+            <section id="panel-mode-reading" class="mode-panel hidden">
+              <div class="card">
+                <h3 class="card-title">朗讀練習</h3>
+                <p class="helper-text">請朗讀一首詩，我會幫你看看音量和語速。按下開始後，請清楚朗讀。3 秒沒有聲音會自動結束。</p>
+                <div class="inline-actions" style="margin-top:10px;">
+                  <button id="btn-reading-start" class="control-btn primary-btn">開始朗讀分析</button>
+                  <button id="btn-reading-stop" class="control-btn danger-btn">停止分析</button>
+                  <button id="btn-reading-retry" class="control-btn">重新分析</button>
+                  <button id="btn-reading-demo" class="control-btn">聽朗讀示範</button>
+                </div>
+              </div>
+              <div class="reading-grid">
+                <div id="panel-reading-volume" class="metric-card">
+                  <div class="helper-text">音量分析</div>
+                  <div id="text-reading-volume-result" class="metric-value">—</div>
+                </div>
+                <div id="panel-reading-speed" class="metric-card">
+                  <div class="helper-text">語速分析</div>
+                  <div id="text-reading-speed-result" class="metric-value">—</div>
+                </div>
+              </div>
+              <div id="text-reading-feedback" class="card result-box">分析完成後，我會告訴你可以怎麼調整。</div>
+            </section>
+
+            <section id="panel-mode-emotion" class="mode-panel hidden">
+              <div class="card">
+                <h3 class="card-title">心情配詩</h3>
+                <p class="helper-text">讓我看看你的表情，我來幫你配一首適合現在心情的詩。</p>
+                <div class="inline-actions" style="margin-top:10px;">
+                  <button id="btn-emotion-start" class="control-btn primary-btn">開始表情辨識</button>
+                  <button id="btn-emotion-stop" class="control-btn danger-btn">停止辨識</button>
+                  <button id="btn-emotion-again" class="control-btn">再配一首</button>
+                  <button id="btn-emotion-read-reason" class="control-btn">聽推薦理由</button>
+                </div>
+              </div>
+              <div id="media-emotion-preview" class="media-box">啟動表情辨識後，這裡會顯示鏡頭畫面。</div>
+              <div id="text-emotion-result" class="card result-box">我感受到你的心情是……</div>
+              <div id="card-emotion-related-poem" class="card">
+                <h3 class="card-title">適合你的詩詞</h3>
+                <div class="poem-meta-grid">
+                  <div class="label">詩名：</div><div id="text-emotion-poem-title">—</div>
+                  <div class="label">包含物：</div><div id="text-emotion-poem-objects">—</div>
+                  <div class="label">情緒：</div><div id="text-emotion-poem-emotion">—</div>
+                </div>
+                <div class="inline-actions" style="margin-top:10px;">
+                  <button id="btn-emotion-comfort" class="control-btn">讓小書僮安慰我</button>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <nav id="section-mode-tabs">
+      <button id="tab-mode-ask" class="mode-tab active">問問公仔</button>
+      <button id="tab-mode-quiz" class="mode-tab">AI考考我</button>
+      <button id="tab-mode-image" class="mode-tab">看圖猜詩</button>
+      <button id="tab-mode-reading" class="mode-tab">朗讀練習</button>
+      <button id="tab-mode-emotion" class="mode-tab">心情配詩</button>
+    </nav>
+
+    <div id="section-action-bar">
+      <button id="btn-global-reset" class="action-btn">重新開始</button>
+      <button id="btn-global-replay" class="action-btn">再玩一次</button>
+      <button id="btn-action-random" class="action-btn">隨機推薦一首詩</button>
+      <button id="btn-action-open-multimodal" class="action-btn">原始多模態頁面</button>
+      <button id="btn-global-home" class="action-btn">返回首頁</button>
+    </div>
+  </div>
+
+  <iframe id="engineFrame" src="multimodal.html" title="多模態詩詞功能引擎"></iframe>
+
+  <script>
+    const uiText = {
+      taskTitleDefault: '今天的詩詞任務',
+      taskDescDefault: '跟著小書僮一起完成挑戰吧！',
+      mascotBubbleDefault: '你好呀！今天想先問我，還是讓我考考你呢？',
+      bubbles: {
+        ask: '你可以問我作者、意思、情緒，也可以直接說給我聽。',
+        quiz: '換我來出題囉！選出你覺得最正確的答案吧！',
+        image: '把圖片拿給我看，我來幫你配一首詩。',
+        reading: '請朗讀一首詩，我會幫你看看音量和語速。',
+        emotion: '讓我看看你的表情，我來幫你配一首適合心情的詩。',
+        listening: '我正在聽你說喔。',
+        thinking: '我想一想……',
+        encouraging: '你做得很好，我們一起繼續！',
+        hinting: '別急，我給你一個小提示。',
+        comforting: '沒關係，我陪你慢慢來。'
+      },
+      mascotStates: {
+        idle: '待機中',
+        listening: '正在聆聽',
+        thinking: '正在思考',
+        speaking: '正在回答',
+        questioning: '正在出題',
+        encouraging: '正在鼓勵你',
+        hinting: '正在提醒你',
+        comforting: '正在陪伴你'
+      }
+    };
+
+    const TM_IMAGE_EMBEDDED_MODEL_ID = '89PqqqYf8';
+
+    const state = {
+      mode: 'ask',
+      engineReady: false,
+      selectedImageFile: null,
+      lastAnswerText: '',
+      lastQuizQuestion: '',
+      lastImageText: '',
+      lastEmotionText: '',
+      activePoem: null,
+      activePoemByMode: { ask: null, quiz: null, image: null, emotion: null }
+    };
+
+    const $ = id => document.getElementById(id);
+    const modePanels = {
+      ask: $('panel-mode-ask'),
+      quiz: $('panel-mode-quiz'),
+      image: $('panel-mode-image'),
+      reading: $('panel-mode-reading'),
+      emotion: $('panel-mode-emotion')
+    };
+    const engineFrame = $('engineFrame');
+    let engineWin = null;
+    let engineDoc = null;
+
+    function escapeHtml(str='') {
+      return str.replace(/[&<>"]/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[s]));
+    }
+
+    function getEngine() {
+      if (!engineFrame.contentWindow) return null;
+      engineWin = engineFrame.contentWindow;
+      try { engineDoc = engineWin.document; } catch (_) { engineDoc = null; }
+      return engineWin;
+    }
+
+    async function withEngine(cb, { rethrow = false } = {}) {
+      const eng = getEngine();
+      if (!eng || !engineDoc) {
+        if (rethrow) throw new Error('多模態引擎尚未就緒');
+        return null;
+      }
+      try {
+        return await cb(eng, engineDoc);
+      } catch (err) {
+        console.error(err);
+        if (rethrow) throw err;
+        return null;
+      }
+    }
+
+    async function withEngineStrict(cb) {
+      return await withEngine(cb, { rethrow: true });
+    }
+
+    async function getBridgeState() {
+      return await withEngine((eng) => typeof eng.getFrontBridgeState === 'function' ? eng.getFrontBridgeState() : null);
+    }
+
+    function setMascotState(key='idle', bubble='') {
+      $('status-mascot-state').textContent = uiText.mascotStates[key] || uiText.mascotStates.idle;
+      $('text-mascot-bubble').textContent = bubble || uiText.bubbles[state.mode] || uiText.mascotBubbleDefault;
+    }
+
+    function setMode(mode) {
+      state.mode = mode;
+      const modeNameMap = { ask:'問問公仔', quiz:'AI考考我', image:'看圖猜詩', reading:'朗讀練習', emotion:'心情配詩' };
+      $('text-current-mode').textContent = `目前模式：${modeNameMap[mode]}`;
+      Object.entries(modePanels).forEach(([key, el]) => el.classList.toggle('hidden', key !== mode));
+      [...document.querySelectorAll('.mode-tab')].forEach(btn => btn.classList.remove('active'));
+      $(`tab-mode-${mode}`).classList.add('active');
+      setMascotState('idle', uiText.bubbles[mode]);
+      if (mode === 'image') syncImage();
+      if (mode === 'emotion') syncEmotion();
+      if (mode === 'reading') syncReading();
+      if (mode === 'quiz') syncQuiz();
+      if (mode === 'ask') syncAsk();
+    }
+
+    function renderPoemMeta(prefix, poem) {
+      $(`text-${prefix}-poem-title`).textContent = poem?.name || '—';
+      $(`text-${prefix}-poem-objects`).textContent = Array.isArray(poem?.items) && poem.items.length ? poem.items.join('、') : '—';
+      $(`text-${prefix}-poem-emotion`).textContent = Array.isArray(poem?.emotions) && poem.emotions.length ? poem.emotions.join('、') : '—';
+    }
+
+    function renderImageSummary(bridge) {
+      const raw = (bridge?.imgRawResultText || '').trim();
+      const cat = (bridge?.imgCatResultText || '').trim();
+      const rawHtml = (bridge?.imgRawResultHtml || '').trim();
+      const catHtml = (bridge?.imgCatResultHtml || '').trim();
+      if (!raw && !cat && !rawHtml && !catHtml) {
+        $('text-image-result').textContent = '辨識完成後，我會在這裡告訴你我看到了什麼。';
+        return;
+      }
+      const parts = [];
+      if (rawHtml || raw) parts.push(`<div><strong>辨識結果</strong><br>${rawHtml || escapeHtml(raw).replace(/\n/g, '<br>')}</div>`);
+      if (catHtml || cat) parts.push(`<div><strong>相關詩詞</strong><br>${catHtml || escapeHtml(cat).replace(/\n/g, '<br>')}</div>`);
+      $('text-image-result').innerHTML = parts.join('<hr style="border:none;border-top:1px solid var(--line);margin:12px 0;">');
+    }
+
+    function applyActivePoem(poem, targetMode='ask') {
+      if (!poem) return;
+      state.activePoem = poem;
+      state.activePoemByMode[targetMode] = poem;
+      if (targetMode === 'ask') renderPoemMeta('ask', poem);
+      if (targetMode === 'quiz') renderPoemMeta('quiz', poem);
+      if (targetMode === 'image') renderPoemMeta('image', poem);
+      if (targetMode === 'emotion') renderPoemMeta('emotion', poem);
+    }
+
+    function readCurrentAnswer() {
+      const txt = state.lastAnswerText || $('text-ask-answer').textContent || '';
+      if (!txt.trim()) return;
+      const utter = new SpeechSynthesisUtterance(txt.replace(/【.*?】/g, '').trim());
+      utter.lang = 'zh-TW';
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(utter);
+    }
+
+    function clearVisibleFields() {
+      $('input-ask-question').value = '';
+      $('text-ask-answer').textContent = '你的問題送出後，我會在這裡回答你。';
+      $('text-ask-voice-status').textContent = '語音問答待命';
+      $('text-image-result').textContent = '辨識完成後，我會在這裡告訴你我看到了什麼。';
+      $('text-reading-volume-result').textContent = '—';
+      $('text-reading-speed-result').textContent = '—';
+      $('text-reading-feedback').textContent = '分析完成後，我會告訴你可以怎麼調整。';
+      $('text-emotion-result').textContent = '我感受到你的心情是……';
+      $('text-quiz-result').textContent = '作答後，這裡會顯示是否答對、原因與修正提醒。';
+      $('text-quiz-question').textContent = '載入詩詞資料後，按「開始闖關」就能由 AI 主動出題。';
+      $('quiz-options-front').innerHTML = '';
+      ['ask','quiz','image','emotion'].forEach(prefix => renderPoemMeta(prefix, null));
+      state.activePoem = null;
+    }
+
+    async function syncAsk() {
+      const bridge = await getBridgeState();
+      if (!bridge) return;
+      const reply = bridge.qaReply || '你的問題送出後，我會在這裡回答你。';
+      state.lastAnswerText = reply;
+      $('text-ask-answer').textContent = reply;
+      $('text-ask-voice-status').textContent = bridge.voiceChatStatus || bridge.sttStatus || '語音問答待命';
+      if (bridge.currentPoem) applyActivePoem(bridge.currentPoem, 'ask');
+      else $('text-ask-poem-title').textContent = bridge.currentPoemText === '未選取' ? '—' : bridge.currentPoemText;
+    }
+
+    async function syncQuiz() {
+      const bridge = await getBridgeState();
+      if (!bridge) return;
+      $('text-quiz-question').textContent = bridge.quizQuestion || '載入詩詞資料後，按「開始闖關」就能由 AI 主動出題。';
+      $('text-quiz-result').textContent = bridge.quizFeedback || '作答後，這裡會顯示是否答對、原因與修正提醒。';
+      $('text-quiz-score').textContent = '目前得分：' + (bridge.quizScore || '0 / 0');
+      if (bridge.quizMode && $('select-quiz-mode').value !== bridge.quizMode) $('select-quiz-mode').value = bridge.quizMode;
+      const out = $('quiz-options-front');
+      out.innerHTML = '';
+      (bridge.quizOptions || []).forEach((btn, idx) => {
+        const vBtn = document.createElement('button');
+        vBtn.className = 'option-btn';
+        vBtn.id = `btn-quiz-option-${idx}`;
+        vBtn.textContent = btn.text;
+        if (btn.disabled) vBtn.disabled = true;
+        if ((btn.background || '').includes('92, 184, 92') || btn.text.includes('✅')) vBtn.classList.add('correct');
+        if ((btn.background || '').includes('224, 80, 80') || btn.text.includes('❌')) vBtn.classList.add('wrong');
+        vBtn.onclick = () => withEngine((eng, doc) => doc.querySelectorAll('#quizOptions button')?.[idx]?.click());
+        out.appendChild(vBtn);
+      });
+      if (bridge.currentPoem) applyActivePoem(bridge.currentPoem, 'quiz');
+    }
+
+    async function syncImage() {
+      const bridge = await getBridgeState();
+      if (!bridge) return;
+      renderImageSummary(bridge);
+      await withEngine((eng, doc) => {
+        const hiddenPreview = doc.getElementById('imgPreview');
+        const box = $('media-image-preview');
+        if (hiddenPreview?.src && !hiddenPreview.classList.contains('hidden')) {
+          box.innerHTML = `<img src="${hiddenPreview.src}" alt="圖片預覽">`;
+        } else if (!state.selectedImageFile) {
+          box.textContent = '請先上傳圖片';
+        }
+      });
+      if (bridge.currentPoem) applyActivePoem(bridge.currentPoem, 'image');
+      else renderPoemMeta('image', null);
+    }
+
+    async function syncReading() {
+      const bridge = await getBridgeState();
+      if (!bridge) return;
+      $('text-reading-volume-result').textContent = bridge.readingVolumeLabel || '—';
+      $('text-reading-speed-result').textContent = bridge.readingSpeedLabel || '—';
+      const resultText = bridge.readingResultText || '分析完成後，我會告訴你可以怎麼調整。';
+      const adviceText = bridge.readingAdviceText || '';
+      $('text-reading-feedback').textContent = [resultText, adviceText].filter(Boolean).join('\n\n');
+    }
+
+    async function syncEmotion() {
+      const bridge = await getBridgeState();
+      if (!bridge) return;
+      $('text-emotion-result').textContent = bridge.emotionText || '我感受到你的心情是……';
+      await withEngine((eng, doc) => {
+        const hiddenVideo = doc.getElementById('faceVideo');
+        const box = $('media-emotion-preview');
+        if (hiddenVideo?.srcObject && !hiddenVideo.classList.contains('hidden')) {
+          const clone = box.querySelector('video');
+          if (!clone) box.innerHTML = '<video autoplay muted playsinline></video>';
+          const target = box.querySelector('video');
+          if (target && target.srcObject !== hiddenVideo.srcObject) target.srcObject = hiddenVideo.srcObject;
+        }
+      });
+      if (bridge.currentPoem) applyActivePoem(bridge.currentPoem, 'emotion');
+    }
+
+    async function syncStatuses() {
+      const bridge = await getBridgeState();
+      if (!bridge) return;
+      const micActive = !!(bridge.qaRecRunning || bridge.voiceChatActive || bridge.analysisRecRunning || bridge.volActive);
+      const camActive = !!bridge.faceActive;
+      $('status-mic').textContent = micActive ? '麥克風已開啟' : '麥克風未開啟';
+      $('status-camera').textContent = camActive ? '鏡頭已開啟' : '鏡頭未開啟';
+      $('status-mic').classList.toggle('on', micActive);
+      $('status-camera').classList.toggle('on', camActive);
+      if (bridge.voiceChatActive) setMascotState('listening', bridge.voiceChatStatus || uiText.bubbles.listening);
+      else if (bridge.qaRecRunning) setMascotState('listening', bridge.sttStatus || uiText.bubbles.listening);
+      else if (bridge.faceActive) setMascotState('thinking', '我正在觀察你的表情。');
+      else if (bridge.analysisRecRunning || bridge.volActive) setMascotState('listening', '我正在聽你的朗讀。');
+      else if ((state.lastAnswerText || '').trim()) setMascotState('speaking', uiText.bubbles.speaking);
+      else setMascotState('idle', uiText.bubbles[state.mode]);
+    }
+
+    async function updateAll() {
+      if (!state.engineReady) return;
+      await syncStatuses();
+      await Promise.all([syncAsk(), syncQuiz(), syncImage(), syncReading(), syncEmotion()]);
+    }
+
+    function openTeacherPage() {
+      window.open('multimodal.html', '_blank', 'noopener');
+    }
+
+    async function sendAskQuestion(extraPrompt='') {
+      const question = $('input-ask-question').value.trim();
+      if (!question && !extraPrompt) return;
+      setMascotState('thinking', uiText.bubbles.thinking);
+      await withEngine(async (eng, doc) => {
+        const input = doc.getElementById('txtGemini');
+        if (input) input.value = extraPrompt ? `${question}
+${extraPrompt}`.trim() : question;
+        if (typeof eng.askGeminiFromInput === 'function') await eng.askGeminiFromInput();
+      });
+      await syncAsk();
+      setMascotState('speaking', '我找到答案了！');
+    }
+
+    function resetEngineUi() {
+      withEngine((eng) => {
+        try { eng.clearAskSession && eng.clearAskSession(); } catch(_){ }
+        try { eng.clearImageSession && eng.clearImageSession(); } catch(_){ }
+        try { eng.clearReadingSession && eng.clearReadingSession(); } catch(_){ }
+        try { eng.clearEmotionSession && eng.clearEmotionSession(); } catch(_){ }
+      });
+      clearVisibleFields();
+      setMascotState('idle', uiText.bubbles[state.mode]);
+    }
+
+    function speakText(text='') {
+      const content = (text || '').trim();
+      if (!content) return;
+      const utter = new SpeechSynthesisUtterance(content);
+      utter.lang = 'zh-TW';
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(utter);
+    }
+
+    function initEvents() {
+      $('btn-teacher-mode').onclick = openTeacherPage;
+      $('btn-action-open-multimodal').onclick = openTeacherPage;
+      $('btn-global-home').onclick = () => setMode('ask');
+      $('btn-global-reset').onclick = resetEngineUi;
+      $('btn-global-replay').onclick = () => {
+        if (state.mode === 'quiz') $('btn-quiz-start').click();
+        else if (state.mode === 'image') $('btn-image-again').click();
+        else if (state.mode === 'reading') $('btn-reading-retry').click();
+        else if (state.mode === 'emotion') $('btn-emotion-again').click();
+        else $('btn-ask-reset').click();
+      };
+      $('btn-action-random').onclick = () => withEngine((eng, doc) => doc.getElementById('btnRandom')?.click());
+      $('btn-global-read-aloud').onclick = readCurrentAnswer;
+      $('btn-global-show-related').onclick = () => {
+        const poem = state.activePoem || state.activePoemByMode[state.mode];
+        if (poem?.name) {
+          setMascotState('speaking', `這首是《${poem.name}》，要不要再問我更多？`);
+          speakText(`這首是${poem.name}。包含物有${(poem.items||[]).join('、') || '沒有標註'}。情緒是${(poem.emotions||[]).join('、') || '沒有標註'}。`);
+        }
+      };
+
+      ['ask','quiz','image','reading','emotion'].forEach(mode => {
+        $(`tab-mode-${mode}`).onclick = () => setMode(mode);
+      });
+
+      $('btn-ask-submit').onclick = () => sendAskQuestion();
+      $('btn-ask-more').onclick = () => sendAskQuestion('請再多說一點，但保持簡短、適合國小學生。');
+      $('btn-ask-reset').onclick = () => {
+        $('input-ask-question').value = '';
+        $('text-ask-answer').textContent = '你的問題送出後，我會在這裡回答你。';
+        renderPoemMeta('ask', null);
+        withEngine((eng) => eng.clearAskSession && eng.clearAskSession());
+      };
+      $('btn-ask-read-aloud').onclick = readCurrentAnswer;
+      $('input-ask-question').addEventListener('keydown', e => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') sendAskQuestion();
+      });
+      $('btn-ask-voice-start').onclick = () => withEngine((eng) => { eng.startQaStt && eng.startQaStt(); setMode('ask'); });
+      $('btn-ask-voice-stop').onclick = () => withEngine((eng) => eng.stopQaStt && eng.stopQaStt());
+      $('btn-ask-voice-chat').onclick = async () => {
+        const bridge = await getBridgeState();
+        if (bridge?.voiceChatActive) await withEngine((eng) => eng.stopVoiceChat && eng.stopVoiceChat(true));
+        else await withEngine((eng) => eng.startVoiceChat && eng.startVoiceChat());
+      };
+
+      $('select-quiz-mode').onchange = () => withEngine((eng, doc) => {
+        const sel = doc.getElementById('quizMode');
+        if (sel) { sel.value = $('select-quiz-mode').value; sel.dispatchEvent(new Event('change')); }
+      });
+      $('btn-quiz-start').onclick = async () => {
+        await withEngine((eng, doc) => {
+          const sel = doc.getElementById('quizMode');
+          if (sel) sel.value = $('select-quiz-mode').value;
+          eng.startQuiz && eng.startQuiz();
+        });
+        await syncQuiz();
+        setMascotState('questioning', '換我來出題囉！');
+      };
+      $('btn-quiz-next').onclick = async () => { await withEngine((eng, doc) => doc.getElementById('btnQuizNext')?.click()); await syncQuiz(); };
+      $('btn-quiz-read-question').onclick = () => withEngine((eng) => eng.readQuizQuestion ? eng.readQuizQuestion() : speakText($('text-quiz-question').textContent));
+
+      $('btn-image-upload').onclick = () => $('input-image-upload').click();
+      $('btn-image-change').onclick = () => $('input-image-upload').click();
+      $('input-image-upload').onchange = e => {
+        const file = e.target.files?.[0];
+        state.selectedImageFile = file || null;
+        const box = $('media-image-preview');
+        if (!file) { box.textContent = '請先上傳圖片'; return; }
+        const url = URL.createObjectURL(file);
+        box.innerHTML = `<img src="${url}" alt="圖片預覽">`;
+        $('text-image-result').textContent = `已選擇圖片，將使用內置 TM 模型 ${TM_IMAGE_EMBEDDED_MODEL_ID} 進行辨識。`;
+      };
+      $('btn-image-start').onclick = async () => {
+        if (!state.selectedImageFile) return;
+        const startBtn = $('btn-image-start');
+        startBtn.disabled = true;
+        $('text-image-result').innerHTML = '<strong>辨識中…</strong><br>正在等待多模態模型回傳結果。';
+        setMascotState('thinking', '我來看看這張圖片。');
+        try {
+          await withEngineStrict(async (eng) => {
+            if (typeof eng.classifyImage !== 'function') throw new Error('多模態頁面沒有 classifyImage()');
+            const task = eng.classifyImage(state.selectedImageFile);
+            await new Promise(resolve => setTimeout(resolve, 120));
+            await syncImage();
+            return await task;
+          });
+          await syncImage();
+          setMascotState('speaking', '我看到了！');
+        } catch (err) {
+          await syncImage();
+          $('text-image-result').textContent = `辨識失敗：${err?.message || err}`;
+          setMascotState('idle', '這張圖片我還沒看清楚，換一張再試試。');
+        } finally {
+          startBtn.disabled = false;
+        }
+      };
+      $('btn-image-stop').onclick = () => {
+        state.selectedImageFile = null;
+        $('input-image-upload').value='';
+        $('media-image-preview').textContent='請先上傳圖片';
+        $('text-image-result').textContent='辨識完成後，我會在這裡告訴你我看到了什麼。';
+        renderPoemMeta('image', null);
+        withEngine((eng) => eng.clearImageSession && eng.clearImageSession());
+        setMascotState('idle', uiText.bubbles.image);
+      };
+      $('btn-image-clear').onclick = () => {
+        state.selectedImageFile = null; $('input-image-upload').value=''; $('media-image-preview').textContent='請先上傳圖片';
+        $('text-image-result').textContent = '辨識完成後，我會在這裡告訴你我看到了什麼。'; renderPoemMeta('image', null);
+        withEngine((eng) => eng.clearImageSession && eng.clearImageSession());
+      };
+      $('btn-image-again').onclick = () => $('btn-image-start').click();
+      $('btn-image-read-result').onclick = () => speakText($('text-image-result').textContent);
+
+      $('btn-reading-start').onclick = () => withEngine((eng) => { eng.startVoiceAnalysis && eng.startVoiceAnalysis(); setMascotState('listening', '請開始朗讀，我正在聽。'); });
+      $('btn-reading-stop').onclick = async () => { await withEngine((eng) => eng.stopVoiceAnalysis && eng.stopVoiceAnalysis('manual')); await syncReading(); };
+      $('btn-reading-retry').onclick = () => withEngine((eng) => { eng.stopVoiceAnalysis && eng.stopVoiceAnalysis('manual'); setTimeout(() => eng.startVoiceAnalysis && eng.startVoiceAnalysis(), 300); });
+      $('btn-reading-demo').onclick = () => {
+        const poem = state.activePoem || state.activePoemByMode.ask || state.activePoemByMode.image || state.activePoemByMode.emotion;
+        if (poem?.content) speakText(poem.content);
+        else speakText('床前明月光，疑是地上霜。舉頭望明月，低頭思故鄉。');
+      };
+
+      $('btn-emotion-start').onclick = () => withEngine((eng) => { eng.startFace && eng.startFace(); setMascotState('thinking', '我正在看你的表情。'); });
+      $('btn-emotion-stop').onclick = async () => { await withEngine((eng) => eng.stopFace && eng.stopFace({clearResult:false})); await syncEmotion(); };
+      $('btn-emotion-again').onclick = () => withEngine((eng) => { eng.stopFace && eng.stopFace({clearResult:false}); setTimeout(() => eng.startFace && eng.startFace(), 300); });
+      $('btn-emotion-comfort').onclick = () => {
+        const poem = state.activePoemByMode.emotion;
+        if (poem?.name) speakText(`我想推薦你《${poem.name}》。希望這首詩能陪陪你。`);
+        else speakText('沒關係，我陪你慢慢來。');
+        setMascotState('comforting', uiText.bubbles.comforting);
+      };
+      $('btn-emotion-read-reason').onclick = () => speakText($('text-emotion-result').textContent);
+    }
+
+    function onEngineLoaded() {
+      const eng = getEngine();
+      if (!eng || !engineDoc) return;
+      state.engineReady = true;
+      const video = $('video-mascot');
+      video.onerror = () => { video.classList.add('hidden'); $('img-mascot-poster').classList.remove('hidden'); };
+      initEvents();
+      setMode('ask');
+      clearVisibleFields();
+      setInterval(() => { updateAll(); }, 800);
+    }
+
+    engineFrame.addEventListener('load', () => {
+      // Give the engine page a moment to register globals and auto-load bundled data.
+      setTimeout(onEngineLoaded, 1200);
+    });
+  </script>
+</body>
+</html>
