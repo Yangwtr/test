@@ -1,0 +1,1857 @@
+
+// =====================
+// Global State
+// =====================
+let poemsDB = [];
+let poemsLoaded = false;
+let rulesDB = [];
+let customRulesLoaded = false;
+let qaWorkbookConfig = {
+  loaded:false,
+  intents:[],
+  intentMap:{},
+  examples:[],
+  synonymMap:[],
+  regexRules:[],
+  entities:[],
+  responseTemplates:[],
+  backendLogic:[]
+};
+let currentPoem = null;
+let imageMatchedPoems = [];
+let emotionMatchedPoems = [];
+let faceSnapshotDataUrl = '';
+let geminiAvailable = false;
+let lastIntentResult = null;
+let currentPredictions = [];
+let bookmarks = [];
+try { bookmarks = JSON.parse(localStorage.getItem('poem_bookmarks') || '[]'); } catch(_){}
+
+let faceApiReady=false, faceActive=false, faceStream=null, faceRAF=null, lastFaceMs=0;
+let teachableImageModel=null, rawTfImageModel=null, imgModelMetadata=null, imgModelReady=false, imgModelBackend="", imgModelLoadedBackend='', lastImgPreviewObjectUrl='';
+let volActive=false, volStream=null, audioCtx=null, analyser=null, volRAF=null;
+let stt=null, sttRunning=false, lastSentMs=null;
+let currentTab='poems';
+const BUNDLED_POEMS_URL = 'data/poems_db.xlsx';
+const BUNDLED_RULES_URL = 'data/qa_rules.xlsx';
+const BUNDLED_POEMS_LABEL = '內建詩詞資料庫';
+const BUNDLED_RULES_LABEL = '內建問答規則';
+let bundledAutoLoadStarted = false;
+let lastVolLabel=null, lastRateLabel=null;
+let faceStableLabel=null, faceStableCount=0;
+let voiceSession=null, silenceSinceMs=null, lastRateCps=null;
+
+const FACE_MODEL_URL = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@0.22.2/weights';
+const TM_IMAGE_MODEL_ID = '89PqqqYf8';
+const TM_IMAGE_MODEL_URL = `https://teachablemachine.withgoogle.com/models/${TM_IMAGE_MODEL_ID}/`;
+const TM_IMAGE_MODEL_JSON = `${TM_IMAGE_MODEL_URL}model.json`;
+const TM_IMAGE_METADATA_URL = `${TM_IMAGE_MODEL_URL}metadata.json`;
+window.__TM_EMBEDDED_MODEL__ = Object.freeze({
+  id: TM_IMAGE_MODEL_ID,
+  baseUrl: TM_IMAGE_MODEL_URL,
+  modelJson: TM_IMAGE_MODEL_JSON,
+  metadataJson: TM_IMAGE_METADATA_URL
+});
+const IMG_MAP = [
+  {cat:'月亮', poem:'靜夜思',  keys:['moon','lunar','crescent','night sky','full moon','half moon']},
+  {cat:'雲',   poem:'黃鶴樓',  keys:['cloud','cumulus','stratus','cirrus','fog','mist','nebula']},
+  {cat:'夕陽', poem:'登鸛雀樓',keys:['sunset','sunrise','dawn','dusk','horizon','sunlight','solar']},
+  {cat:'雨',   poem:'清明',    keys:['rain','drizzle','shower','raindrop','umbrella','puddle','wet']},
+  {cat:'雪',   poem:'江雪',    keys:['snow','snowflake','blizzard','ice','frost','winter','glacier']},
+  {cat:'江河', poem:'早發白帝城',keys:['river','lake','water','stream','waterfall','ocean','sea','bay','pond','creek']},
+  {cat:'山',   poem:'題西林壁',keys:['mountain','hill','cliff','alp','peak','valley','volcano','ridge']},
+  {cat:'古建築',poem:'登鸛雀樓',keys:['pagoda','temple','monastery','church','tower','castle','palace','arch','ruins','shrine']},
+  {cat:'小路', poem:'山行',    keys:['path','road','trail','alley','lane','sidewalk','footpath','walkway']},
+  {cat:'花',   poem:'春曉',    keys:['flower','blossom','petal','bloom','rose','tulip','daisy','cherry blossom','orchid','peony','plum','lotus flower']},
+  {cat:'柳樹', poem:'絕句',    keys:['willow','weeping willow','tree','branch','leaf','leaves']},
+  {cat:'竹子', poem:'竹里館',  keys:['bamboo','reed','grass','stalk','cane']},
+  {cat:'鳥',   poem:'春曉',    keys:['bird','robin','sparrow','swallow','jay','finch','hawk','eagle','crane','heron','kingfisher','magpie','crow','parrot']},
+  {cat:'白鷺鷥',poem:'漁歌子', keys:['egret','heron','stork','white bird','great egret','little egret']},
+  {cat:'鵝',   poem:'詠鵝',    keys:['goose','geese','duck','swan','waterfowl']},
+  {cat:'雞',   poem:'畫雞',    keys:['chicken','hen','cock','rooster','chick','poultry']},
+  {cat:'船',   poem:'楓橋夜泊',keys:['boat','ship','sailboat','canoe','gondola','junk','vessel','rowboat','raft','yacht']},
+  {cat:'酒杯', poem:'月下獨酌',keys:['wine','goblet','cup','glass','chalice','flask','bottle','vase','jug','pitcher']},
+  {cat:'荷花', poem:'小池',    keys:['lotus','water lily','lily pad','pond plant','aquatic']},
+  {cat:'楓葉', poem:'山行',    keys:['maple','autumn leaf','fall foliage','red leaf','orange leaf','japanese maple']},
+];
+
+const $ = id => document.getElementById(id);
+
+// Shared helpers used by image recognition before the later IIFE script runs.
+function escapeHtml(str=''){
+  return String(str || '')
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;')
+    .replace(/'/g,'&#39;');
+}
+window.escapeHtml = escapeHtml;
+
+function normalizeLabelCandidates(label=''){
+  return String(label || '')
+    .split(/[|,，/]/)
+    .map(s => s.trim())
+    .filter(Boolean);
+}
+window.normalizeLabelCandidates = normalizeLabelCandidates;
+
+// =====================
+// Setup collapse toggle
+// =====================
+let setupOpen = true;
+$('setupToggle').onclick = () => {
+  setupOpen = !setupOpen;
+  const c = $('setupContent');
+  const a = $('setupArrow');
+  if(setupOpen){ c.style.maxHeight='800px'; c.classList.remove('closed'); }
+  else { c.classList.add('closed'); }
+  a.style.transform = setupOpen ? '' : 'rotate(180deg)';
+};
+
+// =====================
+// Tabs
+// =====================
+function switchTab(tab){
+  currentTab = tab;
+  $('poemsBox').classList.toggle('hidden', tab !== 'poems');
+  $('bookmarksBox').classList.toggle('hidden', tab !== 'bookmarks');
+  $('tabPoems').classList.toggle('active', tab === 'poems');
+  $('tabBookmarks').classList.toggle('active', tab === 'bookmarks');
+  if(tab === 'bookmarks') renderBookmarks();
+}
+
+// =====================
+// Status
+// =====================
+function setStatus(text, type='idle'){
+  $('statusText').textContent = text;
+  const dot = $('statusDot');
+  const colors = {ok:'#5cb85c', err:'#e05050', work:'#e8b954', idle:'#9a8a70'};
+  dot.style.background = colors[type] || colors.idle;
+  dot.classList.toggle('status-pulse', type === 'work');
+}
+
+function normalize(s){
+  return (s ?? '')
+    .toString()
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[\u200B-\u200D\uFEFF]/g,'')
+    .replace(/\s+/g,'')
+    .replace(/[，。！？!?,.；;：:「」『』（）()【】\[\]"'`~～、…—＿-]/g,'')
+    .replace(/臺/g,'台')
+    .trim();
+}
+
+function cleanModelUrl(url){
+  let u = (url||'').trim().replace(/\/$/,'');
+  if(u.includes('teachablemachine.withgoogle.com')){
+    const m = u.match(/models\/([a-zA-Z0-9_-]+)/);
+    if(m) u = `https://teachablemachine.withgoogle.com/models/${m[1]}/`;
+  }
+  return u;
+}
+
+function normalizeTMUrl(url=''){
+  let u = cleanModelUrl(String(url || '').trim());
+  if(!u.endsWith('/')) u += '/';
+  return u;
+}
+window.normalizeTMUrl = normalizeTMUrl;
+
+
+function delay(ms){ return new Promise(resolve => setTimeout(resolve, ms)); }
+
+function withTimeout(promise, ms, label='操作逾時'){
+  let timer = null;
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label}（${ms}ms）`)), ms);
+  });
+  return Promise.race([Promise.resolve(promise), timeoutPromise]).finally(() => clearTimeout(timer));
+}
+
+async function fetchJsonStrict(url){
+  const res = await fetch(url, { cache: 'no-store' });
+  if(!res.ok) throw new Error(`載入失敗：${url}（HTTP ${res.status}）`);
+  return await res.json();
+}
+
+async function ensureTfBackend(preferred){
+  if(!window.tf) throw new Error('TensorFlow.js library 未載入');
+  if(typeof tf.ready === 'function') await tf.ready();
+
+  const candidates = [];
+  const current = typeof tf.getBackend === 'function' ? tf.getBackend() : '';
+  if(preferred) candidates.push(preferred);
+  if(current && !candidates.includes(current)) candidates.push(current);
+  for(const name of ['webgl','cpu']) if(name && !candidates.includes(name)) candidates.push(name);
+
+  let lastErr = null;
+  for(const name of candidates){
+    try{
+      if(typeof tf.setBackend === 'function'){
+        const ok = await tf.setBackend(name);
+        if(ok === false) continue;
+      }
+      if(typeof tf.ready === 'function') await tf.ready();
+      return typeof tf.getBackend === 'function' ? (tf.getBackend() || name) : name;
+    }catch(err){ lastErr = err; }
+  }
+  if(current) return current;
+  if(lastErr) throw lastErr;
+  throw new Error('找不到可用的 TensorFlow backend');
+}
+
+async function ensureImageModelMetadata(metadataURL){
+  if(imgModelMetadata?.__from === metadataURL) return imgModelMetadata;
+  const meta = await fetchJsonStrict(metadataURL);
+  imgModelMetadata = { ...meta, __from: metadataURL };
+  return imgModelMetadata;
+}
+
+async function ensureRawTfImageModel(modelURL, metadataURL){
+  if(rawTfImageModel?.__from === modelURL && imgModelMetadata?.__from === metadataURL) return rawTfImageModel;
+  const [meta, model] = await Promise.all([
+    ensureImageModelMetadata(metadataURL),
+    tf.loadLayersModel(modelURL, { strict: false })
+  ]);
+  rawTfImageModel = model;
+  rawTfImageModel.__from = modelURL;
+  return rawTfImageModel;
+}
+
+function getImageModelInputSize(meta){
+  const size = Number(meta?.imageSize || meta?.image_size || meta?.inputSize || 224);
+  return Number.isFinite(size) && size > 0 ? size : 224;
+}
+
+function buildPredictInputCanvas(img, maxSide = 1024){
+  const canvas = document.createElement('canvas');
+  const w = img.naturalWidth || img.width || 1;
+  const h = img.naturalHeight || img.height || 1;
+  const scale = Math.min(1, maxSide / Math.max(w, h));
+  canvas.width = Math.max(1, Math.round(w * scale));
+  canvas.height = Math.max(1, Math.round(h * scale));
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  return canvas;
+}
+
+function mapPredictionList(rawList){
+  return (rawList || []).map(item => ({
+    label: item?.className || item?.label || '',
+    confidence: Number(item?.probability ?? item?.confidence ?? 0) || 0
+  })).filter(item => item.label);
+}
+
+async function predictWithRawTfModel(img, modelURL, metadataURL){
+  await ensureTfBackend('cpu');
+  const [model, meta] = await Promise.all([
+    ensureRawTfImageModel(modelURL, metadataURL),
+    ensureImageModelMetadata(metadataURL)
+  ]);
+  const size = getImageModelInputSize(meta);
+  const canvas = buildPredictInputCanvas(img, Math.max(size, 1024));
+  const labels = Array.isArray(meta?.labels) ? meta.labels : [];
+
+  let input = null;
+  let output = null;
+  let tensor = null;
+  try{
+    input = tf.browser.fromPixels(canvas).toFloat();
+    input = tf.image.resizeBilinear(input, [size, size], true);
+    input = input.div(127.5).sub(1);
+    input = input.expandDims(0);
+    output = model.predict(input);
+    tensor = Array.isArray(output) ? output[0] : output;
+    const data = await tensor.data();
+    return Array.from(data).map((value, index) => ({
+      label: labels[index] || `class_${index}`,
+      confidence: Number(value) || 0
+    })).sort((a,b) => b.confidence - a.confidence);
+  } finally {
+    try{ if(Array.isArray(output)) output.forEach(t => t?.dispose?.()); }
+    catch(_){ }
+    try{ if(tensor && !Array.isArray(output)) tensor.dispose?.(); }
+    catch(_){ }
+    try{ input?.dispose?.(); }catch(_){ }
+  }
+}
+
+async function predictImageWithRecovery(img, modelURL, metadataURL){
+  const canvas = buildPredictInputCanvas(img);
+  const attempts = [
+    { kind: 'tmImage', backend: imgModelLoadedBackend || 'webgl' },
+    { kind: 'tmImage', backend: 'cpu' },
+    { kind: 'rawTf', backend: 'cpu' }
+  ];
+  const errors = [];
+
+  for(const attempt of attempts){
+    try{
+      if(attempt.kind === 'tmImage'){
+        await loadImgModel({ forceReload: attempt.backend !== imgModelLoadedBackend, preferredBackend: attempt.backend });
+        await delay(30);
+        const list = await withTimeout(teachableImageModel.predict(canvas), 15000, `圖片辨識逾時（${attempt.backend}）`);
+        return { backend: `tmImage/${imgModelLoadedBackend || attempt.backend}`, results: mapPredictionList(list) };
+      }
+      const list = await withTimeout(predictWithRawTfModel(img, modelURL, metadataURL), 15000, '圖片辨識逾時（raw tfjs）');
+      return { backend: 'raw-tfjs/cpu', results: mapPredictionList(list) };
+    }catch(err){
+      errors.push(`${attempt.kind}:${attempt.backend} => ${err?.message || err}`);
+      console.warn('圖片辨識嘗試失敗', attempt, err);
+    }
+  }
+  throw new Error(errors.join(' ｜ '));
+}
+
+function setCurrentPoem(p){
+  currentPoem = p || null;
+  $('currentPoem').textContent = currentPoem ? `已選：${currentPoem.name}` : '未選取';
+}
+
+function setReply(text){ $('qaReply').textContent = text; }
+
+function pushFrontConversationLog(role='assistant', text=''){
+  const clean = cleanGeminiText ? cleanGeminiText(text || '') : String(text || '').trim();
+  if(!clean) return;
+  const last = frontConversationLog[frontConversationLog.length - 1];
+  if(last && last.role === role && last.text === clean) return;
+  frontConversationLog.push({ role: role === 'user' ? 'user' : 'assistant', text: clean });
+  if(frontConversationLog.length > 18) frontConversationLog = frontConversationLog.slice(-18);
+}
+
+function clearFrontConversationLog(){
+  frontConversationLog = [];
+}
+
+function captureVideoFrame(videoEl){
+  try{
+    if(!videoEl || !videoEl.videoWidth || !videoEl.videoHeight) return '';
+    const canvas = document.createElement('canvas');
+    canvas.width = videoEl.videoWidth;
+    canvas.height = videoEl.videoHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/png');
+  }catch(_){
+    return '';
+  }
+}
+
+// =====================
+// Ink-flow animation
+// =====================
+function animatePoem(el, text){
+  el.innerHTML = '';
+  [...text].forEach((ch, i) => {
+    const s = document.createElement('span');
+    s.className = 'ink-char';
+    s.style.animationDelay = `${i * 0.035}s`;
+    s.textContent = ch;
+    el.appendChild(s);
+  });
+}
+
+// =====================
+// TTS (朗讀)
+// =====================
+function speakPoem(poem){
+  if(!poem) return;
+  window.speechSynthesis.cancel();
+  const utter = new SpeechSynthesisUtterance(`${poem.name}。作者${poem.author}。${poem.content}`);
+  utter.lang = 'zh-TW';
+  utter.rate = 0.82;
+  utter.pitch = 0.9;
+  // Try to pick a Chinese voice
+  const voices = window.speechSynthesis.getVoices().filter(v => v.lang.startsWith('zh'));
+  if(voices.length) utter.voice = voices[0];
+  window.speechSynthesis.speak(utter);
+}
+
+// =====================
+// Bookmarks (收藏)
+// =====================
+function saveBookmarks(){
+  try { localStorage.setItem('poem_bookmarks', JSON.stringify(bookmarks)); } catch(_){}
+  $('bookmarkCount').textContent = bookmarks.length ? `(${bookmarks.length})` : '';
+}
+
+function isBookmarked(poem){
+  return bookmarks.some(b => b.name === poem.name && b.author === poem.author);
+}
+
+function toggleBookmark(poem){
+  if(isBookmarked(poem)){
+    bookmarks = bookmarks.filter(b => !(b.name === poem.name && b.author === poem.author));
+  } else {
+    bookmarks.push(poem);
+  }
+  saveBookmarks();
+}
+
+function renderBookmarks(){
+  const box = $('bookmarksBox');
+  box.innerHTML = '';
+  if(!bookmarks.length){
+    box.innerHTML = '<div class="text-sm text-center py-10" style="color:var(--ink-gray)">尚未收藏任何詩詞</div>';
+    return;
+  }
+  bookmarks.forEach(p => box.appendChild(makePoemCard(p, false)));
+}
+
+// =====================
+// Poem Card Factory
+// =====================
+function makePoemCard(p, isFirst){
+  const card = document.createElement('div');
+  card.className = 'poem-card p-4' + (isFirst ? ' active' : '');
+
+  const booked = isBookmarked(p);
+  const items = (p.items||[]).join('、');
+  const emos  = (p.emotions||[]).join('、');
+
+  const header = document.createElement('div');
+  header.style.cssText = 'display:flex;align-items:flex-start;justify-content:space-between;gap:8px';
+  header.innerHTML = `
+    <div>
+      <div class="calligraphy font-semibold" style="font-size:1.05rem;color:var(--gold-light)">${p.name||'（無題）'}</div>
+      <div style="font-size:0.72rem;margin-top:4px;color:var(--ink-gray)">僅顯示：詩名／包含物／情緒</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:5px;flex-shrink:0">
+      <button class="tts-btn tts-action">♪ 朗讀</button>
+      <button class="bookmark-btn bk-action ${booked?'saved':''}" title="${booked?'取消收藏':'加入收藏'}">🔖</button>
+    </div>
+  `;
+
+  const tagsDiv = document.createElement('div');
+  tagsDiv.style.cssText = 'display:flex;flex-wrap:wrap;gap:5px;margin-top:10px';
+  tagsDiv.innerHTML = `
+    <span class="tag-item tag-green">含：${items || '未標註'}</span>
+    <span class="tag-item tag-red">情：${emos || '未標註'}</span>
+  `;
+
+  card.appendChild(header);
+  card.appendChild(tagsDiv);
+
+  header.querySelector('.tts-action').onclick = e => { e.stopPropagation(); speakPoem(p); };
+
+  const bkBtn = header.querySelector('.bk-action');
+  bkBtn.style.opacity = booked ? '1' : '0.4';
+  bkBtn.onclick = e => {
+    e.stopPropagation();
+    toggleBookmark(p);
+    const now = isBookmarked(p);
+    bkBtn.style.opacity = now ? '1' : '0.4';
+    bkBtn.classList.toggle('saved', now);
+    bkBtn.title = now ? '取消收藏' : '加入收藏';
+    if(currentTab === 'bookmarks') renderBookmarks();
+  };
+
+  card.onclick = () => {
+    setCurrentPoem(p);
+    setReply(`已選取「${p.name}」。
+你可以問：
+- 這首詩的作者是誰
+- 這首詩的內容是什麼`);
+    document.querySelectorAll('.poem-card.active').forEach(c=>c.classList.remove('active'));
+    card.classList.add('active');
+  };
+
+  return card;
+}
+
+// =====================
+// Render poems list
+// =====================
+function renderPoems(list){
+  const box = $('poemsBox');
+  box.innerHTML = '';
+  if(!list || !list.length){
+    box.innerHTML = '<div class="text-sm text-center py-10" style="color:var(--ink-gray)">（沒有找到）</div>';
+    setCurrentPoem(null);
+    return;
+  }
+  const show = list.slice(0, 50);
+  setCurrentPoem(show[0]);
+  show.forEach((p, idx) => box.appendChild(makePoemCard(p, idx === 0)));
+}
+
+// =====================
+// Random Poem (隨機推薦)
+// =====================
+$('btnRandom').onclick = () => {
+  if(!poemsLoaded){ setReply('請先上傳詩詞 Excel 資料。'); return; }
+  const p = poemsDB[Math.floor(Math.random() * poemsDB.length)];
+  renderPoems([p]);
+  setReply(`✦ 為您隨機推薦：「${p.name}」\n作者：${p.author}`);
+  const btn = $('btnRandom');
+  btn.classList.add('sparkle');
+  setTimeout(() => btn.classList.remove('sparkle'), 500);
+};
+
+// =====================
+// Excel Helpers
+// =====================
+function readFileAsArrayBuffer(file){
+  return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result); fr.onerror=rej; fr.readAsArrayBuffer(file); });
+}
+function findColIndex(headerRow,candidates){
+  const hs=headerRow.map(h=>normalize(h));
+  for(const c of candidates){ const key=normalize(c); const idx=hs.findIndex(x=>x===key||x.includes(key)||key.includes(x)); if(idx>=0) return idx; }
+  return -1;
+}
+async function loadPoemsExcel(file){
+  const ab=await readFileAsArrayBuffer(file);
+  const wb=XLSX.read(ab,{type:'array'});
+  const sheet=wb.Sheets[wb.SheetNames[0]];
+  const rows=XLSX.utils.sheet_to_json(sheet,{header:1,defval:''});
+  if(rows.length<2) throw new Error('詩詞檔案沒有資料');
+  const header=rows[0].map(x=>(x??'').toString().trim());
+  const idxName=findColIndex(header,['詩詞名稱','詩名','題目','名稱']);
+  const idxAuthor=findColIndex(header,['作者','詩人']);
+  const idxContent=findColIndex(header,['本文','詩詞內容','內容','詩文','全文','原文']);
+  const idxGenre=findColIndex(header,['詩詞體裁','體裁','詩體','文體','類別']);
+  const idxItems=findColIndex(header,['包含物品','物品','意象','關鍵物品']);
+  const idxEmo=findColIndex(header,['情緒','情緒標籤','情感','心情']);
+  const idxAppreciation=findColIndex(header,['賞析','解析','賞析(可選)','解說','說明']);
+  const fb=(idx,def)=>idx>=0?idx:def;
+  poemsDB=rows.slice(1).map(r=>{
+    const name=(r[fb(idxName,0)]||'').toString().trim();
+    const author=(r[fb(idxAuthor,1)]||'').toString().trim();
+    const content=(r[fb(idxContent,2)]||'').toString().trim();
+    const genre=(idxGenre>=0?(r[idxGenre]||'').toString().trim():'');
+    const itemsStr=(r[fb(idxItems,3)]||'').toString().trim();
+    const emoStr=(idxEmo>=0?(r[idxEmo]||'').toString().trim():'');
+    const appreciation=(idxAppreciation>=0?(r[idxAppreciation]||'').toString().trim():'');
+    return {
+      name,
+      author,
+      content,
+      genre,
+      appreciation,
+      items:itemsStr.split(/[,，、]/).map(x=>x.trim()).filter(Boolean),
+      emotions:emoStr.split(/[,，、]/).map(x=>x.trim()).filter(Boolean)
+    };
+  }).filter(p=>p.name&&p.content);
+  if(!poemsDB.length) throw new Error('沒有有效詩詞資料');
+  poemsLoaded=true;
+  if(qaWorkbookConfig.loaded) enrichWorkbookConfig();
+  $('poemsStatus').textContent=`✅ 已載入 ${poemsDB.length} 首詩詞`;
+  setStatus('詩詞資料已載入','ok');
+}
+function downloadXlsx(filename,aoa){
+  const ws=XLSX.utils.aoa_to_sheet(aoa); const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,'Sheet1');
+  const out=XLSX.write(wb,{bookType:'xlsx',type:'array'});
+  const blob=new Blob([out],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  const url=URL.createObjectURL(blob); const a=document.createElement('a');
+  a.href=url; a.download=filename; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+}
+function downloadPoemsTemplate(){
+  downloadXlsx('詩詞資料範本.xlsx',[
+    ['詩詞名稱','作者','詩詞內容','包含物品(逗號分隔)','情緒(可選)'],
+    ['靜夜思','李白','床前明月光，疑是地上霜。舉頭望明月，低頭思故鄉。','床,月亮,明月','哀,思'],
+    ['春曉','孟浩然','春眠不覺曉，處處聞啼鳥。夜來風雨聲，花落知多少。','花,鳥,風雨','樂']
+  ]);
+}
+function builtInRules(){
+  return [
+    {name:'與X有關的詩',regex:/(與|跟)(.+?)(有關)(的)?詩/i,action:'SEARCH_BY_ITEM',arg1:2,reply:'我找到 {count} 首「與{keyword}有關」的詩，已列出並預設選取第一首。'},
+    {name:'包含X的詩',regex:/(包含|有)(.+?)(的)?詩/i,action:'SEARCH_BY_ITEM',arg1:2,reply:'我找到 {count} 首包含「{keyword}」的詩。'},
+    {name:'情緒是X的詩',regex:/情緒(是)?(.+?)(的)?詩/i,action:'SEARCH_BY_EMOTION',arg1:2,reply:'我找到 {count} 首情緒為「{keyword}」的詩。'},
+    {name:'作者是X的詩',regex:/作者(是)?(.+?)(的)?詩/i,action:'SEARCH_BY_AUTHOR',arg1:2,reply:'我找到 {count} 首作者為「{keyword}」的詩。'},
+    {name:'選擇詩名',regex:/^(選擇|選取|打開)\s*(.+)$/i,action:'SELECT_BY_TITLE',arg1:2,reply:'已選取「{poem.name}」。'},
+    {name:'問作者',regex:/這首詩.*(作者|誰寫|寫的)/i,action:'ANSWER_CURRENT_AUTHOR',arg1:0,reply:'「{poem.name}」的作者是：{poem.author}'},
+    {name:'問內容',regex:/這首詩.*(內容|全文|詩句)/i,action:'ANSWER_CURRENT_CONTENT',arg1:0,reply:'「{poem.name}」內容如下：\n{poem.content}'},
+    {name:'問題目',regex:/這首詩.*(名字|題目|叫什麼)/i,action:'ANSWER_CURRENT_TITLE',arg1:0,reply:'這首詩的名稱是：「{poem.name}」。'},
+    {name:'幫助',regex:/^(幫助|怎麼用|指令|help)$/i,action:'HELP',arg1:0,reply:'你可以說：與花有關的詩 / 包含月亮的詩 / 作者是李白的詩 / 選擇 靜夜思 / 這首詩的作者是誰'}
+  ];
+}
+
+function downloadRulesTemplate(){
+  const wb = XLSX.utils.book_new();
+  const addSheet = (name, aoa) => XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), name);
+
+  addSheet('README', [
+    ['問答規則匯入說明'],
+    ['此範本支援 Intents / Examples / SynonymMap / RegexRules / Entities / ResponseTemplates 多工作表。'],
+    ['工作表','用途','是否必需'],
+    ['Intents','主意圖定義','是'],
+    ['Examples','訓練示例句','是'],
+    ['SynonymMap','同義詞映射','是'],
+    ['RegexRules','高置信規則','是'],
+    ['Entities','實體別名','建議'],
+    ['ResponseTemplates','回答模板','建議']
+  ]);
+  addSheet('Intents', [
+    ['意圖主表'],
+    ['每列一個 intent'],
+    ['questionnaire_id','questionnaire_name','intent_id','intent_name_zh','description','priority','require_poem_context','require_person_context','required_slots','optional_slots','classifier_strategy','threshold_high','threshold_low','fallback_action','notes'],
+    ['Q1','身分調查局','AUTHOR_QUERY','查詢作者','辨識學生是否在問詩的作者／寫作人',100,'Y','N','poem_name','poem_name,poet_name','hybrid(rule+keyword+semantic)',0.88,0.72,'clarify_if_low_confidence','範本']
+  ]);
+  addSheet('Examples', [
+    ['訓練示例句'],
+    ['正樣本與負樣本都放在此表'],
+    ['example_id','intent_id','utterance','normalized_utterance','style','age_band','has_context_ref','negative_example','source','notes'],
+    ['EX0001','AUTHOR_QUERY','這首詩是誰寫的','這首詩是誰寫的','direct','1-6','Y','N','template','正樣本']
+  ]);
+  addSheet('SynonymMap', [
+    ['同義詞映射表'],
+    ['後台請先 normalize 再展開 canonical token'],
+    ['group_id','canonical_token','synonym','token_type','intent_scope','match_mode','weight','notes'],
+    ['G001','AUTHOR','誰寫','alias','AUTHOR','contains',1,'作者同義詞']
+  ]);
+  addSheet('RegexRules', [
+    ['高置信規則表'],
+    ['regex 命中可直接給高分'],
+    ['rule_id','intent_id','match_type','pattern','positive_keywords_any','positive_keywords_all','negative_keywords','confidence','priority','notes'],
+    ['R001','AUTHOR_QUERY','regex','(作者|誰寫|哪位.*詩人|誰作|創作者|出自誰手)','','','',0.95,100,'作者查詢']
+  ]);
+  addSheet('Entities', [
+    ['實體別名字典'],
+    ['供 slot filling 使用'],
+    ['entity_type','canonical_value','alias_pattern','notes'],
+    ['POET','李白','李白|太白','範例']
+  ]);
+  addSheet('ResponseTemplates', [
+    ['回答模板'],
+    ['識別 intent 後可快速套用'],
+    ['intent_id','template_id','response_style','response_template_zh','fallback_when_missing_slot'],
+    ['AUTHOR_QUERY','T001','標準','這首詩的作者是 {poet_name}。','若缺 poem_name，先追問作品名稱']
+  ]);
+
+  const out = XLSX.write(wb,{bookType:'xlsx',type:'array'});
+  const blob = new Blob([out],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '問答規則_多工作表範本.xlsx';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function useBuiltInRules(){
+  rulesDB = builtInRules();
+  customRulesLoaded = false;
+  qaWorkbookConfig.loaded = false;
+  $('rulesStatus').textContent = `未載入（使用內建規則 ${rulesDB.length} 條）`;
+}
+
+function sheetToRows(sheet){
+  return XLSX.utils.sheet_to_json(sheet,{header:1,defval:''});
+}
+function findHeaderRow(rows, requiredHeaders){
+  const req = requiredHeaders.map(normalize);
+  for(let i=0;i<rows.length;i++){
+    const hs = (rows[i] || []).map(normalize);
+    if(req.every(r => hs.includes(r))) return i;
+  }
+  return -1;
+}
+function parseSheetObjects(sheet, requiredHeaders){
+  if(!sheet) return [];
+  const rows = sheetToRows(sheet);
+  const headerRowIndex = findHeaderRow(rows, requiredHeaders);
+  if(headerRowIndex < 0) return [];
+  const header = rows[headerRowIndex].map(x => (x ?? '').toString().trim());
+  return rows.slice(headerRowIndex + 1)
+    .filter(r => r.some(v => (v ?? '').toString().trim() !== ''))
+    .map(r => {
+      const obj = {};
+      header.forEach((h, idx) => obj[h] = r[idx] ?? '');
+      return obj;
+    });
+}
+function csvToList(v){
+  return (v ?? '').toString().split(/[,，、|]/).map(x => x.trim()).filter(Boolean);
+}
+function toNumber(v, fallback=0){
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+function scopeToIntentIds(scope){
+  const s = (scope ?? '').toString().trim();
+  if(!s) return [];
+  const parts = csvToList(s);
+  const ids = new Set();
+  for(const part of parts){
+    const p = normalize(part).toUpperCase();
+    qaWorkbookConfig.intents.forEach(intent => {
+      const iid = (intent.intent_id || '').toString().trim().toUpperCase();
+      if(iid === p || iid.startsWith(p + '_') || iid.includes(p)) ids.add(intent.intent_id);
+    });
+  }
+  return [...ids];
+}
+function collectSynonymHits(rawText){
+  const raw = (rawText || '').toString();
+  const normalized = normalize(rawText);
+  const hits = [];
+  if(!qaWorkbookConfig.loaded) return hits;
+  qaWorkbookConfig.synonymMap.forEach(item => {
+    let matched = false;
+    if(item.match_mode === 'exact'){
+      matched = normalized === item.normalizedSynonym;
+    } else if(item.match_mode === 'contains'){
+      matched = !!item.normalizedSynonym && normalized.includes(item.normalizedSynonym);
+    } else if(item.match_mode === 'regex'){
+      matched = !!item.compiledRegex && item.compiledRegex.test(raw);
+    }
+    if(matched) hits.push(item);
+  });
+  return hits;
+}
+function buildExpandedText(rawText, synonymHits){
+  const base = normalize(rawText);
+  const extras = [...new Set((synonymHits || []).map(x => normalize(x.canonical_token)).filter(Boolean))];
+  return [base, ...extras].join(' ');
+}
+function addPoemDynamicEntities(){
+  const out = [];
+  poemsDB.forEach(p => {
+    if(p.name) out.push({entity_type:'POEM_NAME', canonical_value:p.name, alias_pattern:p.name, notes:'from poemsDB'});
+    if(p.author) out.push({entity_type:'POET', canonical_value:p.author, alias_pattern:p.author, notes:'from poemsDB'});
+    (p.items || []).forEach(it => out.push({entity_type:'SCENE_ITEM', canonical_value:it, alias_pattern:it, notes:'from poemsDB'}));
+    (p.emotions || []).forEach(em => out.push({entity_type:'EMOTION', canonical_value:em, alias_pattern:em, notes:'from poemsDB'}));
+  });
+  return out;
+}
+function enrichWorkbookConfig(){
+  qaWorkbookConfig.intentMap = {};
+  qaWorkbookConfig.intents.forEach(intent => {
+    qaWorkbookConfig.intentMap[intent.intent_id] = intent;
+  });
+  qaWorkbookConfig.regexRules = qaWorkbookConfig.regexRules
+    .map(rule => ({
+      ...rule,
+      compiledPattern: null,
+      compiledNegativeKeywords: csvToList(rule.negative_keywords).map(normalize),
+      compiledPositiveAny: csvToList(rule.positive_keywords_any).map(normalize),
+      compiledPositiveAll: csvToList(rule.positive_keywords_all).map(normalize),
+      confidence: toNumber(rule.confidence, 0.9),
+      priority: toNumber(rule.priority, 0)
+    }))
+    .sort((a,b) => (b.priority || 0) - (a.priority || 0));
+  qaWorkbookConfig.synonymMap = qaWorkbookConfig.synonymMap.map(item => ({
+    ...item,
+    match_mode: ((item.match_mode || 'contains') + '').trim().toLowerCase(),
+    weight: toNumber(item.weight, 1),
+    normalizedSynonym: normalize(item.synonym),
+    compiledRegex: null,
+    intentIds: scopeToIntentIds(item.intent_scope)
+  }));
+  qaWorkbookConfig.synonymMap.forEach(item => {
+    if(item.match_mode === 'regex' && item.synonym){
+      try{ item.compiledRegex = new RegExp(item.synonym, 'i'); }catch(_){ }
+    }
+  });
+  const staticEntities = (qaWorkbookConfig.entities || []).filter(item => item.notes !== 'from poemsDB');
+  const dynamicEntities = addPoemDynamicEntities();
+  qaWorkbookConfig.entities = [...staticEntities, ...dynamicEntities].map(item => ({
+    ...item,
+    aliasList: csvToList((item.alias_pattern || '').toString().replace(/\s*\|\s*/g,'|').replace(/\|/g,',')),
+  }));
+  qaWorkbookConfig.examples = qaWorkbookConfig.examples.map(ex => {
+    const negative = ['y','yes','true','1'].includes(normalize(ex.negative_example));
+    const synonymHits = collectSynonymHits(ex.utterance || ex.normalized_utterance || '');
+    return {
+      ...ex,
+      negative,
+      normalized_utterance_norm: normalize(ex.normalized_utterance || ex.utterance || ''),
+      expandedText: buildExpandedText(ex.utterance || ex.normalized_utterance || '', synonymHits)
+    };
+  });
+}
+function parseWorkbookRules(wb){
+  const intents = parseSheetObjects(wb.Sheets['Intents'], ['intent_id','intent_name_zh']);
+  const examples = parseSheetObjects(wb.Sheets['Examples'], ['example_id','intent_id','utterance']);
+  const synonymMap = parseSheetObjects(wb.Sheets['SynonymMap'], ['group_id','canonical_token','synonym']);
+  const regexRules = parseSheetObjects(wb.Sheets['RegexRules'], ['rule_id','intent_id','pattern']);
+  const entities = parseSheetObjects(wb.Sheets['Entities'], ['entity_type','canonical_value','alias_pattern']);
+  const responseTemplates = parseSheetObjects(wb.Sheets['ResponseTemplates'], ['intent_id','template_id','response_template_zh']);
+  const backendLogic = parseSheetObjects(wb.Sheets['Backend_Logic'], ['step_no','module_name','logic']);
+  if(!intents.length || !examples.length || !synonymMap.length || !regexRules.length){
+    throw new Error('Excel 缺少必要工作表或資料列');
+  }
+  qaWorkbookConfig = {
+    loaded:true,
+    intents,
+    intentMap:{},
+    examples,
+    synonymMap,
+    regexRules,
+    entities,
+    responseTemplates,
+    backendLogic
+  };
+  enrichWorkbookConfig();
+}
+async function loadRulesExcel(file){
+  const ab = await readFileAsArrayBuffer(file);
+  const wb = XLSX.read(ab,{type:'array'});
+  if(wb.SheetNames.includes('Intents') && wb.SheetNames.includes('Examples')){
+    parseWorkbookRules(wb);
+    customRulesLoaded = true;
+    $('rulesStatus').textContent = `✅ 已載入訓練規則：${qaWorkbookConfig.intents.length} 個 intent／${qaWorkbookConfig.examples.length} 句示例／${qaWorkbookConfig.regexRules.length} 條規則`;
+    setStatus('多工作表問答規則已載入','ok');
+    return;
+  }
+
+  const sheet = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(sheet,{header:1,defval:''});
+  if(rows.length < 2) throw new Error('規則表沒有資料');
+  const data = [];
+  for(const r of rows.slice(1)){
+    const name=(r[0]||'').toString().trim(),pattern=(r[1]||'').toString().trim();
+    const flags=(r[2]||'').toString().trim()||'i',action=(r[3]||'').toString().trim();
+    const arg1=(r[4]||'').toString().trim(),reply=(r[5]||'').toString();
+    if(!name||!pattern||!action) continue;
+    data.push({name,regex:new RegExp(pattern,flags),action,arg1:parseInt(arg1||'0',10)||0,reply});
+  }
+  if(!data.length) throw new Error('沒有有效規則');
+  rulesDB = data;
+  qaWorkbookConfig.loaded = false;
+  customRulesLoaded = true;
+  $('rulesStatus').textContent = `✅ 已載入舊版規則 ${rulesDB.length} 條`;
+  setStatus('舊版規則表已載入','ok');
+}
+function collectSynonymIntentVotes(hits){
+  const votes = {};
+  (hits || []).forEach(hit => {
+    const ids = hit.intentIds?.length ? hit.intentIds : scopeToIntentIds(hit.intent_scope);
+    ids.forEach(id => {
+      votes[id] = (votes[id] || 0) + toNumber(hit.weight, 1);
+    });
+  });
+  Object.keys(votes).forEach(id => {
+    votes[id] = Math.min(1, votes[id] / 2);
+  });
+  return votes;
+}
+function detectEntities(rawText){
+  const normalized = normalize(rawText);
+  const out = {
+    poem_name: '',
+    poet_name: '',
+    dynasty: '',
+    scene_items: [],
+    emotion_tokens: [],
+    raw_entities: []
+  };
+  if(currentPoem){
+    out.poem_name = currentPoem.name || '';
+    out.poet_name = currentPoem.author || '';
+  }
+  if(!qaWorkbookConfig.loaded) return out;
+  qaWorkbookConfig.entities.forEach(ent => {
+    (ent.aliasList || []).forEach(alias => {
+      const na = normalize(alias);
+      if(!na) return;
+      if(normalized.includes(na)){
+        out.raw_entities.push({entity_type:ent.entity_type, canonical_value:ent.canonical_value, alias});
+        if(ent.entity_type === 'POEM_NAME' && !out.poem_name) out.poem_name = ent.canonical_value;
+        if(ent.entity_type === 'POET' && !out.poet_name) out.poet_name = ent.canonical_value;
+        if(ent.entity_type === 'DYNASTY' && !out.dynasty) out.dynasty = ent.canonical_value;
+        if(ent.entity_type === 'SCENE_ITEM' && !out.scene_items.includes(ent.canonical_value)) out.scene_items.push(ent.canonical_value);
+        if(ent.entity_type === 'EMOTION' && !out.emotion_tokens.includes(ent.canonical_value)) out.emotion_tokens.push(ent.canonical_value);
+      }
+    });
+  });
+  return out;
+}
+function charBigrams(s){
+  const t = normalize(s);
+  if(t.length < 2) return new Set(t ? [t] : []);
+  const set = new Set();
+  for(let i=0;i<t.length-1;i++) set.add(t.slice(i,i+2));
+  return set;
+}
+function diceSimilarity(a, b){
+  const A = charBigrams(a), B = charBigrams(b);
+  if(!A.size || !B.size) return 0;
+  let inter = 0;
+  A.forEach(x => { if(B.has(x)) inter++; });
+  return (2 * inter) / (A.size + B.size);
+}
+function utteranceSimilarity(a, b){
+  const na = normalize(a), nb = normalize(b);
+  if(!na || !nb) return 0;
+  const dice = diceSimilarity(na, nb);
+  const contain = (na.includes(nb) || nb.includes(na)) ? 0.22 : 0;
+  const prefix = (na.slice(0,3) && na.slice(0,3) === nb.slice(0,3)) ? 0.06 : 0;
+  return Math.min(1, dice + contain + prefix);
+}
+function matchRegexRule(rule, rawText, normalizedText){
+  if(!rule.pattern) return false;
+  let ok = false;
+  try {
+    const re = rule.compiledPattern || new RegExp(rule.pattern, 'i');
+    rule.compiledPattern = re;
+    ok = re.test(rawText) || re.test(normalizedText);
+  } catch(_){
+    ok = false;
+  }
+  if(!ok) return false;
+  if(rule.compiledNegativeKeywords.some(k => k && normalizedText.includes(k))) return false;
+  if(rule.compiledPositiveAny.length && !rule.compiledPositiveAny.some(k => normalizedText.includes(k))) return false;
+  if(rule.compiledPositiveAll.length && !rule.compiledPositiveAll.every(k => normalizedText.includes(k))) return false;
+  return true;
+}
+function resolvePoemContext(entityInfo){
+  if(entityInfo?.poem_name){
+    const exact = poemsDB.find(p => normalize(p.name) === normalize(entityInfo.poem_name));
+    if(exact) return exact;
+    const found = findByTitle(entityInfo.poem_name);
+    if(found.length) return found[0];
+  }
+  if(currentPoem) return currentPoem;
+  return null;
+}
+function inferPoemType(poem){
+  if(!poem?.content) return null;
+  const lines = poem.content.split(/[，。！？!?；;\n]/).map(x => x.trim()).filter(Boolean);
+  const lineCount = lines.length;
+  const charCount = lines[0] ? [...normalize(lines[0])].length : 0;
+  let poemForm = '';
+  if(lineCount === 4 && charCount === 5) poemForm = '五言絕句';
+  else if(lineCount === 4 && charCount === 7) poemForm = '七言絕句';
+  else if(lineCount === 8 && charCount === 5) poemForm = '五言律詩';
+  else if(lineCount === 8 && charCount === 7) poemForm = '七言律詩';
+  else poemForm = `${lineCount}句詩`;
+  return {poem_form:poemForm, line_count:lineCount, char_count:charCount};
+}
+function inferSeasonOrColor(poem){
+  const content = poem?.content || '';
+  let season = '';
+  let color = '';
+  let reason = '';
+  if(/春|花|鳥|柳/.test(content)){ season = '春天'; color = '嫩綠色'; reason = '詩中有花、鳥、春意的線索'; }
+  else if(/夏|荷|蟬|炎/.test(content)){ season = '夏天'; color = '翠綠色'; reason = '詩中有夏日或濃綠景象'; }
+  else if(/秋|雁|楓|霜/.test(content)){ season = '秋天'; color = '金黃色'; reason = '詩中有秋、雁、楓、霜等意象'; }
+  else if(/冬|雪|寒|冰/.test(content)){ season = '冬天'; color = '白色'; reason = '詩中有雪、寒意或冬景'; }
+  else if(/月|夜/.test(content)){ season = '夜晚氛圍'; color = '銀白色'; reason = '詩中有月色或夜景'; }
+  else { season = '需要結合上下文推論'; color = '淡墨色'; reason = '資料中沒有明確季節詞，只能依整體意境推測'; }
+  return {season_or_color:`${season}、${color}`, reason};
+}
+function inferEmotion(poem){
+  const emos = poem?.emotions || [];
+  if(emos.length) return emos.join('、');
+  const c = poem?.content || '';
+  if(/思鄉|故鄉|愁|淚|悲/.test(c)) return '思念、感傷';
+  if(/喜|樂|笑|春/.test(c)) return '愉快、明朗';
+  return '平靜';
+}
+function detectRhyme(poem){
+  const lines = (poem?.content || '').split(/[。！？!?；;\n]/).map(x => x.trim()).filter(Boolean);
+  const lastChars = lines.map(l => l.replace(/[，。！？!?；;]/g,'').trim()).filter(Boolean).map(l => l.slice(-1));
+  const uniq = [...new Set(lastChars)];
+  return {lastChars, uniq};
+}
+function getTemplate(intentId){
+  return qaWorkbookConfig.responseTemplates.find(t => t.intent_id === intentId) || null;
+}
+function fillTemplate(str, slots){
+  return (str || '')
+    .replace(/\{poet_name\}/g, slots.poet_name ?? '')
+    .replace(/\{dynasty\}/g, slots.dynasty ?? '')
+    .replace(/\{poem_form\}/g, slots.poem_form ?? '')
+    .replace(/\{line_count\}/g, slots.line_count ?? '')
+    .replace(/\{char_count\}/g, slots.char_count ?? '')
+    .replace(/\{scene_items\}/g, slots.scene_items ?? '')
+    .replace(/\{season_or_color\}/g, slots.season_or_color ?? '')
+    .replace(/\{reason\}/g, slots.reason ?? '')
+    .replace(/\{emotion\}/g, slots.emotion ?? '')
+    .replace(/\{poem_name\}/g, slots.poem_name ?? '');
+}
+function poetDynastyLookup(poetName){
+  const map = {
+    '李白':'唐朝','杜甫':'唐朝','王維':'唐朝','孟浩然':'唐朝','白居易':'唐朝',
+    '王之渙':'唐朝','柳宗元':'唐朝','杜牧':'唐朝','李商隱':'唐朝','蘇軾':'宋朝',
+    '李清照':'宋朝','辛棄疾':'宋朝','陸游':'宋朝','楊萬里':'宋朝'
+  };
+  return map[poetName] || '';
+}
+function comfortTargetEmotion(rawText){
+  const t = normalize(rawText);
+  if(/難過|傷心|哭|失落|沮喪|想哭/.test(t)) return ['哀','思','平靜'];
+  if(/生氣|吵架|憤怒/.test(t)) return ['平靜','樂'];
+  if(/害怕|緊張|焦慮/.test(t)) return ['平靜'];
+  return ['樂','平靜','思'];
+}
+function recommendComfortPoems(rawText){
+  const targets = comfortTargetEmotion(rawText);
+  const found = poemsDB.filter(p => (p.emotions || []).some(e => targets.some(t => normalize(e).includes(normalize(t)))));
+  return found.slice(0, 3);
+}
+function classifyWithWorkbook(rawText){
+  const normalizedText = normalize(rawText);
+  const synonymHits = collectSynonymHits(rawText);
+  const synonymVotes = collectSynonymIntentVotes(synonymHits);
+  const entityInfo = detectEntities(rawText);
+  const topExample = {};
+  const topNegative = {};
+  qaWorkbookConfig.examples.forEach(ex => {
+    const sim = utteranceSimilarity(buildExpandedText(rawText, synonymHits), ex.expandedText || ex.normalized_utterance_norm);
+    if(ex.negative){
+      topNegative[ex.intent_id] = Math.max(topNegative[ex.intent_id] || 0, sim);
+    } else if(!topExample[ex.intent_id] || sim > topExample[ex.intent_id].score){
+      topExample[ex.intent_id] = {score:sim, utterance:ex.utterance};
+    }
+  });
+
+  const candidates = qaWorkbookConfig.intents.map(intent => {
+    const regexHits = qaWorkbookConfig.regexRules.filter(rule => rule.intent_id === intent.intent_id && matchRegexRule(rule, rawText, normalizedText));
+    const regexScore = regexHits.length ? Math.max(...regexHits.map(r => r.confidence || 0)) : 0;
+    const exampleScore = topExample[intent.intent_id]?.score || 0;
+    const negativeScore = topNegative[intent.intent_id] || 0;
+    const synonymScore = synonymVotes[intent.intent_id] || 0;
+    const contextScore = (normalize(intent.require_poem_context) === 'y' && resolvePoemContext(entityInfo)) ? 0.08 : 0;
+    let finalScore = Math.max(regexScore, Math.min(0.99, exampleScore * 0.82 + synonymScore * 0.18 + contextScore + (regexScore ? 0.05 : 0)));
+    finalScore = Math.max(0, finalScore - negativeScore * 0.25);
+    return {
+      intent_id:intent.intent_id,
+      intent_name_zh:intent.intent_name_zh,
+      score:finalScore,
+      threshold_high:toNumber(intent.threshold_high, 0.88),
+      threshold_low:toNumber(intent.threshold_low, 0.72),
+      regexHits,
+      topExample:topExample[intent.intent_id] || null,
+      synonymScore,
+      entityInfo
+    };
+  }).sort((a,b) => b.score - a.score);
+
+  return {
+    rawText,
+    normalizedText,
+    synonymHits,
+    synonymVotes,
+    entityInfo,
+    candidates,
+    top:candidates[0] || null,
+    second:candidates[1] || null
+  };
+}
+function keywordFromUtterance(rawText, entityInfo){
+  if(entityInfo?.scene_items?.length) return entityInfo.scene_items[0];
+  const normalizedText = normalize(rawText);
+  for(const poem of poemsDB){
+    for(const item of (poem.items || [])){
+      if(normalizedText.includes(normalize(item))) return item;
+    }
+  }
+  return '';
+}
+function handleSentenceLegacy(s){
+  s = (s || '').trim();
+  if(!s) return;
+  if(!poemsLoaded){ setReply('請先上傳「詩詞資料 Excel」再查詩。'); return; }
+  for(const r of rulesDB){
+    const m=s.match(r.regex); if(!m) continue;
+    const keyword=r.arg1?(m[r.arg1]||''):''; const ctx={keyword,count:0,poem:currentPoem};
+    if(r.action==='SEARCH_BY_ITEM'){ const f=findByItem(keyword); ctx.count=f.length; renderPoems(f); ctx.poem=currentPoem; setReply(f.length?tpl(r.reply,ctx):`找不到包含「${keyword}」的詩。`); return; }
+    if(r.action==='SEARCH_BY_EMOTION'){ const f=findByEmotion(keyword); ctx.count=f.length; renderPoems(f); ctx.poem=currentPoem; setReply(f.length?tpl(r.reply,ctx):`找不到情緒為「${keyword}」的詩。`); return; }
+    if(r.action==='SEARCH_BY_AUTHOR'){ const f=findByAuthor(keyword); ctx.count=f.length; renderPoems(f); ctx.poem=currentPoem; setReply(f.length?tpl(r.reply,ctx):`找不到作者為「${keyword}」的詩。`); return; }
+    if(r.action==='SELECT_BY_TITLE'){ const f=findByTitle(keyword); ctx.count=f.length; if(!f.length){ setReply(`找不到詩名包含「${keyword}」的詩。`); return; } renderPoems(f); ctx.poem=currentPoem; setReply(tpl(r.reply,ctx)); return; }
+    if(r.action==='ANSWER_CURRENT_AUTHOR'){ if(!currentPoem){ setReply('我還不知道你指哪一首，請先查一次或點選一首詩。'); return; } setReply(tpl(r.reply,{poem:currentPoem})); return; }
+    if(r.action==='ANSWER_CURRENT_CONTENT'){ if(!currentPoem){ setReply('我還不知道你指哪一首，請先查一次或點選一首詩。'); return; } setReply(tpl(r.reply,{poem:currentPoem})); return; }
+    if(r.action==='ANSWER_CURRENT_TITLE'){ if(!currentPoem){ setReply('我還不知道你指哪一首，請先查一次或點選一首詩。'); return; } setReply(tpl(r.reply,{poem:currentPoem})); return; }
+    if(r.action==='HELP'){ setReply(r.reply); return; }
+    setReply(`規則 action 未支援：${r.action}`); return;
+  }
+  setReply(`我聽到：「${s}」\n但沒有命中規則。你可以說：幫助`);
+}
+async function executeWorkbookIntent(result){
+  const top = result.top;
+  if(!top){
+    const fallbackText = '沒有辨識到可用的問句意圖。';
+    const handled = await maybeAskGemini(result.rawText || '', {reason:'no_top_intent', failText:fallbackText});
+    if(!handled) setReply(fallbackText);
+    return;
+  }
+  const poem = resolvePoemContext(top.entityInfo);
+  const poetName = top.entityInfo.poet_name || poem?.author || '';
+  const poemName = top.entityInfo.poem_name || poem?.name || '';
+  const infoLine = `【辨識意圖】${top.intent_name_zh}（${(top.score * 100).toFixed(1)}%）`;
+  if(top.score < top.threshold_low){
+    const alt = result.second ? `\n可能也在問：${result.second.intent_name_zh}（${(result.second.score * 100).toFixed(1)}%）` : '';
+    const fallbackText = `${infoLine}\n我還不夠確定你的意思。${poem ? '' : '請先選一首詩，'}可以再說完整一點，例如：「這首詩是誰寫的」或「這首詩在講什麼」${alt}`;
+    const handled = await maybeAskGemini(result.rawText || '', {reason:'low_confidence_intent', prefixText:infoLine, failText:fallbackText});
+    if(!handled) setReply(fallbackText);
+    return;
+  }
+
+  const intentId = top.intent_id;
+  const template = getTemplate(intentId);
+  const slots = {poet_name: poetName, poem_name: poemName};
+
+  if(intentId === 'AUTHOR_QUERY'){
+    if(!poem && !poetName){
+      const fallbackText = `${infoLine}\n我知道你在問作者，但目前沒有作品上下文。請先選一首詩或在句子中提到詩名。`;
+      const handled = await maybeAskGemini(result.rawText || '', {reason:'author_missing_context', prefixText:infoLine, failText:fallbackText});
+      if(!handled) setReply(fallbackText);
+      return;
+    }
+    setReply(`${infoLine}\n` + (template ? fillTemplate(template.response_template_zh, {...slots, poet_name: poetName || '未知作者'}) : `這首詩的作者是 ${poetName || '未知作者'}。`));
+    return;
+  }
+  if(intentId === 'DYNASTY_QUERY'){
+    const dynasty = top.entityInfo.dynasty || poetDynastyLookup(poetName);
+    if(!poetName){
+      const fallbackText = `${infoLine}\n我知道你在問朝代，但還不知道是哪位詩人。請先告訴我作者或作品名稱。`;
+      const handled = await maybeAskGemini(result.rawText || '', {reason:'dynasty_missing_poet', prefixText:infoLine, failText:fallbackText});
+      if(!handled) setReply(fallbackText);
+      return;
+    }
+    if(!dynasty){
+      const fallbackText = `${infoLine}\n${poetName} 的朝代資料目前不在這個頁面資料庫裡，後台可再補 poet→dynasty 對照表。`;
+      const handled = await maybeAskGemini(result.rawText || '', {reason:'dynasty_missing_local_data', prefixText:infoLine, failText:fallbackText});
+      if(!handled) setReply(fallbackText);
+      return;
+    }
+    setReply(`${infoLine}\n` + (template ? fillTemplate(template.response_template_zh, {...slots, dynasty}) : `${poetName} 是 ${dynasty} 的詩人。`));
+    return;
+  }
+  if(intentId === 'POEM_TYPE_QUERY'){
+    if(!poem){ setReply(`${infoLine}\n我知道你在問詩體，但請先選一首詩。`); return; }
+    const typeInfo = inferPoemType(poem);
+    setReply(`${infoLine}\n` + (template ? fillTemplate(template.response_template_zh, {...slots, ...typeInfo}) : `這首詩屬於 ${typeInfo.poem_form}，共有 ${typeInfo.line_count} 句，每句約 ${typeInfo.char_count} 字。`));
+    return;
+  }
+  if(intentId === 'SCENE_OBJECT_QUERY'){
+    if(poem){
+      const items = (poem.items || []).length ? poem.items.join('、') : '目前詩詞表沒有預先標註景物';
+      setReply(`${infoLine}\n` + (template ? fillTemplate(template.response_template_zh, {...slots, scene_items:items}) : `這首詩提到的景物有：${items}。`));
+      return;
+    }
+    const keyword = keywordFromUtterance(result.rawText, top.entityInfo);
+    if(keyword){
+      const found = findByItem(keyword);
+      renderPoems(found);
+      setReply(`${infoLine}\n我依照景物關鍵字「${keyword}」找到 ${found.length} 首詩。`);
+      return;
+    }
+    setReply(`${infoLine}\n我知道你在問景物，但目前沒有指定作品。可以先選一首詩。`);
+    return;
+  }
+  if(intentId === 'SEASON_COLOR_QUERY'){
+    if(!poem){ setReply(`${infoLine}\n我知道你在問季節或顏色，但請先選一首詩。`); return; }
+    const inferred = inferSeasonOrColor(poem);
+    setReply(`${infoLine}\n` + (template ? fillTemplate(template.response_template_zh, {...slots, ...inferred}) : `這首詩比較像 ${inferred.season_or_color}，因為 ${inferred.reason}。`));
+    return;
+  }
+  if(intentId === 'IMAGE_TO_POEM_QUERY'){
+    const keyword = keywordFromUtterance(result.rawText, top.entityInfo) || getPredictionSnapshot()[0] || '';
+    if(keyword){
+      const found = findByItem(keyword);
+      renderPoems(found);
+      setReply(`${infoLine}\n我用「${keyword}」當線索，幫你找出 ${found.length} 首可能相符的詩。`);
+      return;
+    }
+    setReply(`${infoLine}\n請提供圖中的關鍵物件，例如月亮、花、鳥、山水，我就能幫你配詩。`);
+    return;
+  }
+  if(intentId === 'POEM_EMOTION_QUERY'){
+    if(!poem){ setReply(`${infoLine}\n我知道你在問詩的心情，但請先選一首詩。`); return; }
+    const emotion = inferEmotion(poem);
+    setReply(`${infoLine}\n這首詩的情緒比較像：${emotion}。`);
+    return;
+  }
+  if(intentId === 'COMFORT_POEM_RECOMMEND'){
+    const recs = recommendComfortPoems(result.rawText);
+    if(recs.length) renderPoems(recs);
+    const names = recs.map(p => `《${p.name}》`).join('、');
+    setReply(`${infoLine}\n我幫你挑了 ${recs.length || 0} 首比較適合現在心情的詩${names ? '：' + names : ''}。`);
+    return;
+  }
+  if(intentId === 'EMOTION_REASON_QUERY'){
+    if(!poem){ setReply(`${infoLine}\n我知道你在問情緒原因，但請先選一首詩。`); return; }
+    const emotion = inferEmotion(poem);
+    const items = (poem.items || []).join('、') || '意境線索';
+    setReply(`${infoLine}\n這首詩會讓人覺得 ${emotion}，通常是因為詩中的 ${items} 以及整體語氣帶出這種感受。`);
+    return;
+  }
+  if(intentId === 'POEM_TRANSLATION'){
+    const fallbackText = !poem
+      ? `${infoLine}\n我知道你在問白話解釋，但請先選一首詩。`
+      : `${infoLine}\n目前這個前端頁面沒有逐句白話資料表；後台若補上 translation 欄位，就能直接回應。現在可先顯示原文：\n${poem.content}`;
+    const handled = await maybeAskGemini(result.rawText || '', {reason:'translation_missing_local_data', prefixText:infoLine, failText:fallbackText});
+    if(!handled) setReply(fallbackText);
+    return;
+  }
+  if(intentId === 'WORD_EXPLANATION'){
+    const fallbackText = !poem
+      ? `${infoLine}\n我知道你在問字詞解釋，但請先選一首詩。`
+      : `${infoLine}\n目前這個頁面還沒有單字字義資料表；後台可再補「word_glossary」欄位或工作表。`;
+    const handled = await maybeAskGemini(result.rawText || '', {reason:'word_glossary_missing_local_data', prefixText:infoLine, failText:fallbackText});
+    if(!handled) setReply(fallbackText);
+    return;
+  }
+  if(intentId === 'STORY_BACKGROUND'){
+    const fallbackText = !poem
+      ? `${infoLine}\n我知道你在問背景故事，但請先選一首詩。`
+      : `${infoLine}\n目前這個前端頁面尚未載入作品背景欄位；後台可再補 background_story 後直接回答。`;
+    const handled = await maybeAskGemini(result.rawText || '', {reason:'background_story_missing_local_data', prefixText:infoLine, failText:fallbackText});
+    if(!handled) setReply(fallbackText);
+    return;
+  }
+  if(intentId === 'RHYME_QUERY'){
+    const fallbackText = !poem
+      ? `${infoLine}\n我知道你在問押韻，但請先選一首詩。`
+      : (() => { const rhyme = detectRhyme(poem); return `${infoLine}\n這首詩各句句尾字大致是：${rhyme.lastChars.join('、')}。是否押韻，後台可再加平仄／韻部資料做更精準判斷。`; })();
+    const handled = await maybeAskGemini(result.rawText || '', {reason:'rhyme_analysis_ai_assist', prefixText:infoLine, failText:fallbackText});
+    if(!handled) setReply(fallbackText);
+    return;
+  }
+  if(intentId === 'READ_ALOUD_REQUEST'){
+    if(!poem){ setReply(`${infoLine}\n我知道你想聽朗讀，但請先選一首詩。`); return; }
+    speakPoem(poem);
+    setReply(`${infoLine}\n我已開始朗讀《${poem.name}》。`);
+    return;
+  }
+  if(intentId === 'PARALLELISM_QUERY'){
+    const fallbackText = !poem
+      ? `${infoLine}\n我知道你在問對仗，但請先選一首詩。`
+      : (() => { const typeInfo = inferPoemType(poem); const likely = /律詩/.test(typeInfo.poem_form) ? '這首詩較有可能出現對仗' : '這首詩不一定以對仗為主'; return `${infoLine}\n${likely}，若後台補上句對句標註，就能更準確說明哪兩句形成對仗。`; })();
+    const handled = await maybeAskGemini(result.rawText || '', {reason:'parallelism_analysis_ai_assist', prefixText:infoLine, failText:fallbackText});
+    if(!handled) setReply(fallbackText);
+    return;
+  }
+
+  const fallbackText = `${infoLine}\n已辨識到意圖 ${intentId}，但此頁面尚未定義對應回覆。`;
+  const handled = await maybeAskGemini(result.rawText || '', {reason:'intent_defined_but_no_frontend_handler', prefixText:infoLine, failText:fallbackText});
+  if(!handled) setReply(fallbackText);
+}
+// =====================
+// Bundled Excel Auto-load
+// =====================
+async function fileFromUrl(url, filename, type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'){
+  const res = await fetch(url);
+  if(!res.ok) throw new Error(`無法讀取 ${filename}`);
+  const blob = await res.blob();
+  return new File([blob], filename, {type: blob.type || type});
+}
+async function autoLoadBundledData(force=false){
+  if(bundledAutoLoadStarted && !force) return;
+  bundledAutoLoadStarted = true;
+  try{
+    $('poemsStatus').textContent = '讀取內建詩詞資料中…';
+    const poemsFile = await fileFromUrl(BUNDLED_POEMS_URL, 'poems_db.xlsx');
+    await loadPoemsExcel(poemsFile);
+    $('poemsStatus').textContent = `✅ 已載入 ${BUNDLED_POEMS_LABEL}（${poemsDB.length} 首）`;
+  }catch(err){
+    console.error(err);
+    $('poemsStatus').textContent = '❌ 內建詩詞資料載入失敗：' + (err.message || err);
+  }
+  try{
+    $('rulesStatus').textContent = '讀取內建問答規則中…';
+    const rulesFile = await fileFromUrl(BUNDLED_RULES_URL, 'qa_rules.xlsx');
+    await loadRulesExcel(rulesFile);
+    if(qaWorkbookConfig.loaded) $('rulesStatus').textContent = `✅ 已載入 ${BUNDLED_RULES_LABEL}：${qaWorkbookConfig.intents.length} 個 intent`;
+    else $('rulesStatus').textContent = `✅ 已載入 ${BUNDLED_RULES_LABEL}：${rulesDB.length} 條規則`;
+  }catch(err){
+    console.error(err);
+    useBuiltInRules();
+    $('rulesStatus').textContent = '❌ 內建問答規則載入失敗（改用前端內建規則）';
+  }
+}
+
+// =====================
+// Search helpers
+// =====================
+function findByItem(kw){ const k=normalize(kw); if(!k) return []; return poemsDB.filter(p=>(p.items||[]).some(it=>{ const a=normalize(it); return a&&(a.includes(k)||k.includes(a)); })); }
+function findByEmotion(kw){ const k=normalize(kw); if(!k) return []; return poemsDB.filter(p=>(p.emotions||[]).some(e=>{ const a=normalize(e); return a&&(a.includes(k)||k.includes(a)); })); }
+function findByAuthor(kw){ const k=normalize(kw); if(!k) return []; return poemsDB.filter(p=>{ const a=normalize(p.author); return a&&(a.includes(k)||k.includes(a)); }); }
+function findByTitle(kw){ const k=normalize(kw); if(!k) return []; return poemsDB.filter(p=>{ const n=normalize(p.name); return n&&(n.includes(k)||k.includes(n)); }); }
+function uniqPoems(list){ const seen=new Set(); return (list||[]).filter(p=>{ const key=`${p.name}@@${p.author}`; if(seen.has(key)) return false; seen.add(key); return true; }); }
+function findRelatedPoemsByLabel(label){ return uniqPoems([ ...findByTitle(label), ...findByItem(label), ...findByEmotion(label) ]); }
+
+// =====================
+// Predictions UI
+// =====================
+function setSource(s){ $('resultSource').textContent = s||'—'; }
+function renderPredictions(preds){
+  const box=$('predBox'); box.innerHTML='';
+  const sorted=[...(preds||[])].sort((a,b)=>(b.confidence||0)-(a.confidence||0));
+  currentPredictions = sorted.slice(0,3).map(p => p.label);
+  const top3=sorted.slice(0,3);
+  if(!top3.length){ box.innerHTML='<div class="text-sm text-center py-8" style="color:var(--ink-gray)">（沒有結果）</div>'; $('confBox').textContent='信心度：--'; return; }
+  top3.forEach((p,idx)=>{
+    const pct=((p.confidence||0)*100).toFixed(1);
+    const row=document.createElement('div');
+    row.style.cssText=`padding:10px 12px;border-radius:2px;background:rgba(12,9,5,0.7);border:1px solid rgba(201,151,62,${idx===0?'0.35':'0.12'});margin-bottom:6px`;
+    row.innerHTML=`
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <span class="calligraphy" style="font-size:0.9rem;color:${idx===0?'var(--gold-light)':'var(--paper)'};font-weight:${idx===0?600:400}">${p.label}</span>
+        <span style="font-size:0.82rem;color:${idx===0?'var(--gold)':'var(--ink-gray)'}">${pct}%</span>
+      </div>
+      <div style="margin-top:7px;height:3px;border-radius:2px;background:rgba(255,255,255,0.05)">
+        <div style="height:3px;border-radius:2px;width:${pct}%;background:${idx===0?'var(--gold)':'rgba(201,151,62,0.35)'}"></div>
+      </div>
+    `;
+    box.appendChild(row);
+  });
+  $('confBox').textContent=`信心度：${((sorted[0].confidence||0)*100).toFixed(1)}%`;
+  if(poemsLoaded&&sorted[0]){
+    const label=sorted[0].label; const src=$('resultSource').textContent;
+    let found=[];
+    if(src==='臉部'){ found=findByEmotion(label); if(!found.length) found=findByItem(label); renderPoems(found); }
+    else if(src==='圖片'){ found=findRelatedPoemsByLabel(label); renderPoems(found); }
+    else if(src==='聲音'){ /* 聲音分析以建議為主，不自動改寫相關詩詞 */ }
+  }
+}
+
+// =====================
+// Built-in Model Loading
+// =====================
+function buildCatMapLegend(){
+  const leg = $('catMapLegend');
+  if(!leg) return;
+  const labels = teachableImageModel?.getClassLabels?.() || [];
+  leg.innerHTML = `內置模型 ID：<span style="color:var(--gold-light)">${TM_IMAGE_MODEL_ID}</span><br>模型網址：<br>${TM_IMAGE_MODEL_URL}<br>${labels.length ? `<span style="color:var(--gold-light)">模型類別：</span> ${labels.join('、')}` : '模型類別將在載入完成後顯示。'}`;
+}
+function setAudioResultText(volumeText='—', rateText='—'){
+  const box = $('audioResultText');
+  if(!box) return;
+  box.innerHTML = `音量分析結果：${volumeText}<br>語速分析結果：${rateText}`;
+}
+function setAudioAdvice(lines=[], color='var(--ink-gray)'){
+  const box = $('audioAdvice');
+  if(!box) return;
+  box.style.color = color;
+  box.innerHTML = lines.length ? lines.map(x => `• ${x}`).join('<br>') : '建議會顯示於此';
+}
+function getVolumeDescriptor(rms){
+  if(rms > 0.15) return { label:'音量大', color:'#e05050', advice:'音量偏大，朗讀時可稍微放鬆，避免太用力。' };
+  if(rms > 0.04) return { label:'音量適中', color:'var(--gold)', advice:'音量穩定，保持現在的發聲方式即可。' };
+  return { label:'音量小', color:'var(--mist)', advice:'音量偏小，請靠近麥克風並把聲音再放出來一些。' };
+}
+function getRateDescriptor(cps){
+  if(!Number.isFinite(cps) || cps <= 0) return { label:'尚未取得語速', color:'var(--ink-gray)', advice:'請完整說一句話，系統才會計算語速。' };
+  if(cps > 4) return { label:'語速快', color:'#e05050', advice:'語速偏快，可在每個詞之間多停半拍。' };
+  if(cps >= 2) return { label:'語速適中', color:'var(--gold)', advice:'語速自然，可以繼續保持。' };
+  return { label:'語速慢', color:'var(--mist)', advice:'語速偏慢，可把一句話連得更順一些。' };
+}
+function updateVoiceButtons(){
+  const active = !!(volActive || sttRunning);
+  if($('btnVolume')){
+    $('btnVolume').textContent = active ? '停止音量＋語速分析' : '一鍵開始音量＋語速分析';
+    $('btnVolume').style.background = active ? '#b91c1c' : 'var(--vermillion)';
+  }
+  if($('btnStt')){
+    $('btnStt').textContent = active ? '停止語音分析' : '開始語音轉文字問答';
+    $('btnStt').style.background = active ? '#b91c1c' : 'var(--vermillion)';
+  }
+}
+function resetVoiceSession(){
+  voiceSession = {
+    rmsSum:0, rmsCount:0, rmsPeak:0,
+    volLabels:[], rateValues:[], rateLabels:[], transcripts:[]
+  };
+  silenceSinceMs = null;
+  lastRateCps = null;
+  lastVolLabel = null;
+  lastRateLabel = null;
+  setAudioResultText('—','—');
+  setAudioAdvice([]);
+  refreshCombo();
+}
+function summarizeVoiceSession(reason='manual'){
+  const avgRms = voiceSession?.rmsCount ? voiceSession.rmsSum / voiceSession.rmsCount : 0;
+  const volInfo = getVolumeDescriptor(avgRms);
+  const avgCps = voiceSession?.rateValues?.length ? voiceSession.rateValues.reduce((a,b)=>a+b,0) / voiceSession.rateValues.length : 0;
+  const rateInfo = getRateDescriptor(avgCps);
+  const volText = `${volInfo.label}（平均 RMS ${avgRms.toFixed(3)}，峰值 ${(voiceSession?.rmsPeak||0).toFixed(3)}）`;
+  const rateText = voiceSession?.rateValues?.length ? `${rateInfo.label}（平均 ${avgCps.toFixed(1)} 字/秒）` : '尚未取得有效語速';
+  setAudioResultText(volText, rateText);
+  const notes = [volInfo.advice, rateInfo.advice];
+  if(reason === 'silence') notes.unshift('已偵測 3 秒沒有聲音，系統已自動結束分析。');
+  if(!voiceSession?.rateValues?.length) notes.push('請再說完整一點的一句話，才能得到更準確的語速建議。');
+  setAudioAdvice(notes, 'var(--paper)');
+  refreshCombo(volInfo, rateInfo);
+  setStatus(reason === 'silence' ? '3秒無聲音，已自動停止分析' : '語音分析已完成','ok');
+}
+function refreshCombo(volInfoOverride=null, rateInfoOverride=null){
+  const parts=[];
+  const volInfo = volInfoOverride || (lastVolLabel ? getVolumeDescriptor(lastVolLabel === '音量大' ? 0.18 : lastVolLabel === '音量適中' ? 0.08 : 0.01) : null);
+  const rateInfo = rateInfoOverride || (lastRateLabel ? ({ '語速快':getRateDescriptor(5), '語速適中':getRateDescriptor(3), '語速慢':getRateDescriptor(1) }[lastRateLabel]) : null);
+  if(volInfo) parts.push({t:volInfo.label,c:volInfo.color});
+  if(rateInfo && rateInfo.label !== '尚未取得語速') parts.push({t:rateInfo.label,c:rateInfo.color});
+  if(!parts.length){ $('audioCombo').textContent='啟動後會同步分析音量與語速，並給出修正建議'; $('audioCombo').style.color='var(--ink-gray)'; return; }
+  $('audioCombo').innerHTML=parts.map((p,i)=>`${i>0?'<span style="color:var(--ink-gray);margin:0 6px">・</span>':''}<span class="calligraphy" style="font-size:1rem;color:${p.c};font-weight:600">${p.t}</span>`).join('');
+}
+async function loadFaceApi(){
+  setStatus('載入 face-api.js 模型…','work');
+  try{
+    await Promise.all([
+      faceapi.nets.tinyFaceDetector.loadFromUri(FACE_MODEL_URL),
+      faceapi.nets.faceExpressionNet.loadFromUri(FACE_MODEL_URL)
+    ]);
+    faceApiReady = true;
+    $('faceLoadTxt').textContent = '✅ 模型就緒（1 秒確認後會自動停止並截圖）';
+    $('btnFace').disabled = false;
+    setStatus('臉部辨識模型已就緒','ok');
+  }catch(e){
+    console.error(e);
+    $('faceLoadTxt').textContent = '❌ 載入失敗：' + (e.message || e);
+    setStatus('face-api.js 載入失敗','err');
+  }
+}
+function mapExpr(e){
+  return [
+    {label:'喜',confidence:e.happy||0},
+    {label:'樂',confidence:e.surprised||0},
+    {label:'怒',confidence:Math.max(e.angry||0,e.disgusted||0)},
+    {label:'哀',confidence:Math.max(e.sad||0,e.fearful||0)},
+    {label:'靜',confidence:e.neutral||0},
+  ].sort((a,b)=>b.confidence-a.confidence);
+}
+async function startFace(){
+  if(!faceApiReady){ setStatus('face-api.js 模型尚未就緒','err'); return; }
+  if(!navigator.mediaDevices?.getUserMedia){ setStatus('❌ 需要 HTTPS 或 localhost','err'); return; }
+  try{
+    setStatus('請求鏡頭…','work');
+    faceStableLabel = null; faceStableCount = 0;
+    faceStream = await navigator.mediaDevices.getUserMedia({video:true});
+    const v = $('faceVideo'); v.srcObject = faceStream; await v.play();
+    v.classList.remove('hidden'); $('faceHint').classList.add('hidden');
+    $('btnFace').textContent='停止臉部辨識'; $('btnFace').style.background='#b91c1c';
+    $('faceEmoRow').innerHTML='<span class="text-xs" style="color:var(--ink-gray)">辨識中，穩定後會自動確認…</span>';
+    faceActive=true; setSource('臉部'); setStatus('臉部辨識中…','ok'); faceLoop();
+  }catch(e){
+    setStatus('無法使用鏡頭：' + (e.message || e),'err');
+  }
+}
+function stopFace(options={}){
+  faceActive=false; if(faceRAF) cancelAnimationFrame(faceRAF); faceRAF=null;
+  if(faceStream){ faceStream.getTracks().forEach(t=>t.stop()); faceStream=null; }
+  const v=$('faceVideo'); v.pause(); v.srcObject=null; v.classList.add('hidden'); $('faceHint').classList.remove('hidden');
+  $('btnFace').textContent='啟動臉部辨識'; $('btnFace').style.background='var(--vermillion)';
+  if(options.finalHtml) $('faceEmoRow').innerHTML = options.finalHtml;
+  else $('faceEmoRow').innerHTML='<span class="text-xs" style="color:var(--ink-gray)">已停止</span>';
+  setStatus(options.statusText || '已停止臉部辨識','idle');
+}
+async function faceLoop(){
+  if(!faceActive) return;
+  const now=Date.now();
+  if(now-lastFaceMs>120){
+    lastFaceMs=now;
+    try{
+      const det = await faceapi.detectSingleFace($('faceVideo'), new faceapi.TinyFaceDetectorOptions()).withFaceExpressions();
+      if(det){
+        const emos = mapExpr(det.expressions);
+        const top = emos[0];
+        const ec={喜:'#e8b954',樂:'#5cb85c',怒:'#e05050',哀:'#7090b0',靜:'#9a8a70'};
+        if(top.confidence >= 0.55){
+          if(faceStableLabel === top.label) faceStableCount += 1;
+          else { faceStableLabel = top.label; faceStableCount = 1; }
+        } else {
+          faceStableLabel = null; faceStableCount = 0;
+        }
+        $('faceEmoRow').innerHTML=`<span class="calligraphy font-semibold" style="font-size:1.4rem;color:${ec[top.label]||'var(--gold)'}">${top.label}</span><span class="text-xs" style="color:var(--ink-gray)">${(top.confidence*100).toFixed(0)}%・確認 ${Math.min(faceStableCount,4)}/4</span>`;
+        if(faceStableCount >= 4){
+          setSource('臉部');
+          renderPredictions(emos);
+          stopFace({
+            statusText:'臉部辨識已確認',
+            finalHtml:`<span class="calligraphy font-semibold" style="font-size:1.4rem;color:${ec[top.label]||'var(--gold)'}">${top.label}</span><span class="text-xs" style="color:var(--ink-gray)">${(top.confidence*100).toFixed(0)}%・已確認</span>`
+          });
+          return;
+        }
+      }else $('faceEmoRow').innerHTML='<span class="text-xs" style="color:var(--ink-gray)">未偵測到人臉</span>';
+    }catch(e){ console.error(e); }
+  }
+  faceRAF=requestAnimationFrame(faceLoop);
+}
+async function loadImgModel(options={}){
+  const { forceReload = false, preferredBackend = null } = options;
+  if(imgModelReady && teachableImageModel && !forceReload){
+    return teachableImageModel;
+  }
+
+  $('imgLoadTxt').textContent='⏳ 載入圖片辨識模型（tmImage）…';
+  setStatus('載入圖片辨識模型…','work');
+  imgModelReady = false;
+  teachableImageModel = null;
+
+  try{
+    if(!window.tmImage) throw new Error('tmImage library 未載入');
+    if(!window.tf) throw new Error('TensorFlow.js library 未載入');
+
+    const modelBaseUrl = normalizeTMUrl(TM_IMAGE_MODEL_URL);
+    const modelURL = `${modelBaseUrl}model.json`;
+    const metadataURL = `${modelBaseUrl}metadata.json`;
+
+    const backend = await ensureTfBackend(preferredBackend || imgModelLoadedBackend || 'webgl');
+    await ensureImageModelMetadata(metadataURL);
+    const model = await withTimeout(tmImage.load(modelURL, metadataURL), 15000, '圖片模型載入逾時');
+    if(!model || typeof model.predict !== 'function') throw new Error('tmImage 模型已載入，但 predict() 不可用');
+
+    teachableImageModel = model;
+    imgModelReady = true;
+    imgModelBackend = `tmImage/${backend}`;
+    imgModelLoadedBackend = backend;
+    $('btnImg').disabled = false;
+    $('btnImg').textContent = '上傳圖片辨識（TM）';
+    $('imgLoadTxt').textContent=`✅ 圖片模型就緒（tmImage / ${backend}）`;
+    try{ buildCatMapLegend(); }catch(_){ }
+    setStatus(`圖片辨識模型已就緒（${backend}）`,'ok');
+    return model;
+  }catch(err){
+    console.error(err);
+    imgModelReady = false;
+    imgModelBackend = '';
+    teachableImageModel = null;
+    $('btnImg').disabled = false;
+    $('btnImg').textContent = '上傳圖片辨識（TM）';
+    $('imgLoadTxt').textContent='❌ 圖片模型載入失敗：' + (err.message || err);
+    try{ buildCatMapLegend(); }catch(_){ }
+    setStatus('圖片模型載入失敗','err');
+    throw err;
+  }
+}
+
+async function classifyImage(file){
+  if(!file) return null;
+
+  const modelBaseUrl = normalizeTMUrl(TM_IMAGE_MODEL_URL);
+  const modelURL = `${modelBaseUrl}model.json`;
+  const metadataURL = `${modelBaseUrl}metadata.json`;
+  await ensureImageModelMetadata(metadataURL);
+
+  if(lastImgPreviewObjectUrl){
+    try{ URL.revokeObjectURL(lastImgPreviewObjectUrl); }catch(_){ }
+    lastImgPreviewObjectUrl = '';
+  }
+  const objectUrl = URL.createObjectURL(file);
+  lastImgPreviewObjectUrl = objectUrl;
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.decoding = 'async';
+
+  return await new Promise((resolve, reject) => {
+    img.onload = async () => {
+      try{
+        if(typeof img.decode === 'function'){
+          try{ await img.decode(); }catch(_){ }
+        }
+        $('imgPreview').src = objectUrl;
+        $('imgPreview').classList.remove('hidden');
+        $('imgHint').classList.add('hidden');
+        $('imgRawResult').innerHTML = '<div class="text-xs text-center py-3" style="color:var(--ink-gray)">辨識中…</div>';
+        $('imgCatResult').innerHTML = '<div class="text-xs text-center" style="color:var(--ink-gray)">比對中…</div>';
+        setSource('圖片');
+        setStatus('圖片辨識中…','work');
+
+        const { backend, results } = await predictImageWithRecovery(img, modelURL, metadataURL);
+        imgModelBackend = backend;
+        const top = [...results].sort((a,b)=>(b.confidence||0)-(a.confidence||0)).slice(0,5);
+
+        $('imgRawResult').innerHTML = top.length ? top.map((r,i) => {
+          const pct = ((r.confidence || 0) * 100).toFixed(1);
+          return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px"><span style="font-size:0.78rem;color:${i===0?'var(--paper)':'rgba(242,232,210,0.5)'};max-width:78%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(r.label)}</span><span style="font-size:0.72rem;color:${i===0?'var(--gold)':'var(--ink-gray)'};flex-shrink:0;margin-left:6px">${pct}%</span></div>`;
+        }).join('') : '<div class="text-xs text-center py-4" style="color:var(--ink-gray)">沒有辨識結果</div>';
+
+        renderPredictions(top.map(r => ({label:r.label, confidence:r.confidence || 0})));
+        const best = top[0] || null;
+        let found = [];
+        if(best){
+          for(const candidate of normalizeLabelCandidates(best.label)){
+            found = uniqPoems([...(found||[]), ...findRelatedPoemsByLabel(candidate)]);
+          }
+        }
+
+        imageMatchedPoems = found.slice(0, 8);
+        if(found.length){
+          $('imgCatResult').innerHTML = found.slice(0,8).map(p => `<div style="padding:8px 10px;margin-bottom:6px;border:1px solid rgba(201,151,62,0.15);border-radius:2px;background:rgba(12,9,5,0.45)"><div class="calligraphy" style="color:var(--gold-light);font-size:0.95rem">${escapeHtml(p.name || '（無題）')}</div><div style="font-size:0.75rem;color:var(--mist);margin-top:4px">含：${escapeHtml((p.items||[]).join('、') || '未標註')}</div><div style="font-size:0.75rem;color:#d49b8f;margin-top:2px">情：${escapeHtml((p.emotions||[]).join('、') || '未標註')}</div></div>`).join('');
+          renderPoems(found);
+        } else {
+          $('imgCatResult').innerHTML = `<div class="text-xs text-center" style="color:var(--ink-gray)">目前找不到與「${escapeHtml(best?.label || '—')}」對應的詩詞資料</div>`;
+          imageMatchedPoems = [];
+          renderPoems([]);
+        }
+
+        $('imgLoadTxt').textContent=`✅ 圖片模型就緒（${backend}）`;
+        try{ buildCatMapLegend(); }catch(_){ }
+        setStatus(`圖片辨識完成（${backend}）`,'ok');
+        resolve({ top, best, found, backend });
+      }catch(err){
+        console.error(err);
+        $('imgRawResult').innerHTML = `<div class="text-xs text-center py-3" style="color:#e5a9a2">辨識失敗：${escapeHtml(err.message || String(err))}</div>`;
+        $('imgCatResult').innerHTML = '<div class="text-xs text-center" style="color:var(--ink-gray)">請重新選擇圖片後再試一次</div>';
+        try{ buildCatMapLegend(); }catch(_){ }
+        setStatus('圖片辨識失敗','err');
+        reject(err);
+      }
+    };
+    img.onerror = () => {
+      $('imgRawResult').innerHTML = '<div class="text-xs text-center py-3" style="color:#e5a9a2">圖片載入失敗</div>';
+      $('imgCatResult').innerHTML = '<div class="text-xs text-center" style="color:var(--ink-gray)">請重新選擇圖片</div>';
+      setStatus('圖片載入失敗','err');
+      reject(new Error('圖片載入失敗'));
+    };
+    img.src = objectUrl;
+  });
+}
+function stopVolumeIfRunning(){ if(volActive || sttRunning) stopVoiceAnalysis('manual'); }
+async function startVolumeCore(){
+  if(volActive) return true;
+  if(!navigator.mediaDevices?.getUserMedia){ setStatus('❌ 需要 HTTPS 或 localhost','err'); return false; }
+  try{
+    volStream=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
+    audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+    const src=audioCtx.createMediaStreamSource(volStream);
+    analyser=audioCtx.createAnalyser(); analyser.fftSize=512; src.connect(analyser);
+    volActive=true; setSource('聲音'); updateVoiceButtons(); volLoop();
+    return true;
+  }catch(e){ setStatus('無法使用麥克風：'+(e.message||e),'err'); return false; }
+}
+function stopVolumeCore(){
+  volActive=false; if(volRAF) cancelAnimationFrame(volRAF); volRAF=null;
+  if(volStream){ volStream.getTracks().forEach(t=>t.stop()); volStream=null; }
+  if(audioCtx){ audioCtx.close(); audioCtx=null; } analyser=null;
+  for(let i=0;i<7;i++){ const b=$('vb'+i); if(b){ b.style.height='10%'; b.style.background='rgba(201,151,62,0.2)'; } }
+  $('volLabel').textContent='—'; $('volRms').textContent='RMS: 0.000';
+}
+async function startVoiceAnalysis(){
+  resetVoiceSession();
+  const ok = await startVolumeCore();
+  if(stt){ try{ stt.start(); }catch(_){} }
+  updateVoiceButtons();
+  if(ok || sttRunning){ setStatus('音量＋語速分析中…','ok'); }
+}
+function stopVoiceAnalysis(reason='manual'){
+  const hadActive = volActive || sttRunning;
+  if(sttRunning && stt){ try{ stt.stop(); }catch(_){} }
+  stopVolumeCore();
+  updateVoiceButtons();
+  if(hadActive) summarizeVoiceSession(reason);
+}
+function volLoop(){
+  if(!volActive || !analyser) return;
+  const td=new Uint8Array(analyser.frequencyBinCount); analyser.getByteTimeDomainData(td);
+  let sum=0; for(let i=0;i<td.length;i++){ const v=(td[i]-128)/128; sum+=v*v; }
+  const rms=Math.sqrt(sum/td.length);
+  if(voiceSession){ voiceSession.rmsSum += rms; voiceSession.rmsCount += 1; voiceSession.rmsPeak = Math.max(voiceSession.rmsPeak, rms); }
+  const fd=new Uint8Array(analyser.frequencyBinCount); analyser.getByteFrequencyData(fd);
+  const step=Math.max(1, Math.floor(fd.length/7));
+  for(let i=0;i<7;i++){ const v=fd[i*step]/255; const b=$('vb'+i); if(b){ b.style.height=Math.max(8,v*100)+'%'; b.style.background=v>.6?'var(--vermillion)':v>.3?'var(--gold)':'rgba(201,151,62,0.5)'; } }
+  const volInfo = getVolumeDescriptor(rms);
+  $('volLabel').textContent=volInfo.label; $('volLabel').style.color=volInfo.color; $('volRms').textContent='RMS: '+rms.toFixed(3);
+  lastVolLabel = volInfo.label;
+  if(voiceSession) voiceSession.volLabels.push(volInfo.label);
+  setAudioResultText(`${volInfo.label}（即時 RMS ${rms.toFixed(3)}）`, lastRateCps ? `${getRateDescriptor(lastRateCps).label}（${lastRateCps.toFixed(1)} 字/秒）` : '尚未取得語速');
+  setAudioAdvice([volInfo.advice, lastRateCps ? getRateDescriptor(lastRateCps).advice : '請先說出一句完整的內容，以計算語速。'], 'var(--paper)');
+  refreshCombo();
+  if(rms > 0.02) silenceSinceMs = null;
+  else if(!silenceSinceMs) silenceSinceMs = Date.now();
+  else if(Date.now() - silenceSinceMs >= 3000){ stopVoiceAnalysis('silence'); return; }
+  volRAF=requestAnimationFrame(volLoop);
+}
+function updateRate(text,durSec){
+  if(!text || durSec<0.5) return;
+  const cps=text.replace(/\s/g,'').length/durSec;
+  lastRateCps = cps;
+  const circ=2*Math.PI*22;
+  const rateInfo = getRateDescriptor(cps);
+  let offset = circ*.72;
+  if(cps>4) offset=circ*(1-Math.min(cps/8,.98));
+  else if(cps>=2) offset=circ*.38;
+  $('rateLabel').textContent=rateInfo.label; $('rateLabel').style.color=rateInfo.color; $('rateVal').textContent='字/秒: '+cps.toFixed(1); $('gaugeFill').style.strokeDashoffset=offset; $('gaugeFill').style.stroke=rateInfo.color;
+  lastRateLabel = rateInfo.label;
+  if(voiceSession){ voiceSession.rateValues.push(cps); voiceSession.rateLabels.push(rateInfo.label); }
+  setAudioResultText(lastVolLabel ? `${lastVolLabel}` : '尚未取得音量', `${rateInfo.label}（${cps.toFixed(1)} 字/秒）`);
+  setAudioAdvice([lastVolLabel ? getVolumeDescriptor(lastVolLabel === '音量大' ? 0.18 : lastVolLabel === '音量適中' ? 0.08 : 0.01).advice : '請先說話，讓系統偵測音量。', rateInfo.advice], 'var(--paper)');
+  refreshCombo();
+}
+// =====================
+// Gemini Fallback / Deployment API
+// =====================
+function getPredictionSnapshot(){
+  if(Array.isArray(currentPredictions) && currentPredictions.length) return currentPredictions.slice(0,3);
+  return [...document.querySelectorAll('#predBox .calligraphy')].map(el=>el.textContent.trim()).filter(Boolean).slice(0,3);
+}
+
+async function pingGeminiHealth(){
+  const statusEl = $('geminiStatus');
+  if(!statusEl) return;
+  statusEl.textContent = 'Gemini 後端檢查中…';
+  statusEl.style.color = 'var(--ink-gray)';
+  try{
+    const res = await fetch('/api/health');
+    const data = await res.json();
+    geminiAvailable = !!data.ok && !!data.hasKey;
+    statusEl.textContent = geminiAvailable
+      ? `Gemini 後端已就緒（${data.model || '未指定模型'}）`
+      : 'Gemini 後端存在，但尚未設定 GEMINI_API_KEY';
+    statusEl.style.color = geminiAvailable ? 'var(--gold-light)' : '#e05050';
+  }catch(err){
+    geminiAvailable = false;
+    statusEl.textContent = 'Gemini 後端不可用';
+    statusEl.style.color = '#e05050';
+  }
+}
+
+async function requestGemini(question, extra={}){
+  const res = await fetch('/api/gemini/chat', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      question,
+      mode: extra.mode || 'manual',
+      reason: extra.reason || '',
+      currentPoem,
+      predictions: getPredictionSnapshot(),
+      currentIntent: lastIntentResult?.top || null,
+      alternateIntent: lastIntentResult?.second || null,
+      source: $('resultSource')?.textContent || '',
+      workbookLoaded: qaWorkbookConfig.loaded,
+      poemsLoaded
+    })
+  });
+  const data = await res.json().catch(() => ({}));
+  if(!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
+
+function formatGeminiReply(prefixText, data){
+  const lines = [];
+  if(prefixText) lines.push(prefixText);
+  lines.push(`【Gemini補答】${data.model ? `（${data.model}）` : ''}`);
+  if(data.answer) lines.push(data.answer);
+  if(data.suggestedFollowUp) lines.push(`追問建議：${data.suggestedFollowUp}`);
+  return lines.join('\n');
+}
+
+async function maybeAskGemini(question, extra={}){
+  if(!$('chkGeminiFallback')?.checked) return false;
+  if(!geminiAvailable){
+    if(extra.failText) setReply(extra.failText);
+    return false;
+  }
+  setReply((extra.prefixText ? extra.prefixText + '\n' : '') + '（規則資料不足，改由 Gemini 補答中…）');
+  try{
+    const data = await requestGemini(question, extra);
+    setReply(formatGeminiReply(extra.prefixText, data));
+    return true;
+  }catch(err){
+    const msg = err?.message || String(err);
+    if(extra.failText) setReply(extra.failText + '\nGemini 補答失敗：' + msg);
+    else setReply('Gemini 補答失敗：' + msg);
+    return false;
+  }
+}
+
+async function askGeminiFromInput(){
+  const input = $('txtGemini');
+  const question = (input?.value || '').trim();
+  if(!question){ setReply('請先輸入問題。'); return; }
+  pushFrontConversationLog('user', question);
+  if(!geminiAvailable){
+    setReply('Gemini 後端尚未就緒。請先在伺服器設定 GEMINI_API_KEY，再按「檢查 Gemini 後端」。');
+    pushFrontConversationLog('assistant', 'Gemini 後端尚未就緒。請先在伺服器設定 GEMINI_API_KEY，再按「檢查 Gemini 後端」。');
+    return;
+  }
+  setReply('Gemini 分析中…');
+  try{
+    const data = await requestGemini(question, {mode:'manual', reason:'direct_input'});
+    const replyText = formatGeminiReply('', data);
+    setReply(replyText);
+    pushFrontConversationLog('assistant', replyText);
+  }catch(err){
+    const msg = 'Gemini 呼叫失敗：' + (err?.message || err);
+    setReply(msg);
+    pushFrontConversationLog('assistant', msg);
+  }
+}
+
+// =====================
+// Rule Engine (STT)
+// =====================
+function tpl(str,ctx){ return (str||'').replace(/\{count\}/g,String(ctx.count??'')).replace(/\{keyword\}/g,String(ctx.keyword??'')).replace(/\{poem\.name\}/g,String(ctx.poem?.name??'')).replace(/\{poem\.author\}/g,String(ctx.poem?.author??'')).replace(/\{poem\.content\}/g,String(ctx.poem?.content??'')); }
+async function handleSentence(s){
+  s = (s || '').trim();
+  if(!s) return;
+  lastIntentResult = null;
+  if(!poemsLoaded){
+    const fallbackText = '請先上傳「詩詞資料 Excel」再查詩。';
+    const handled = await maybeAskGemini(s, {reason:'no_poems_loaded', failText:fallbackText});
+    if(!handled) setReply(fallbackText);
+    return;
+  }
+  if(!qaWorkbookConfig.loaded){
+    handleSentenceLegacy(s);
+    return;
+  }
+  const result = classifyWithWorkbook(s);
+  lastIntentResult = result;
+  await executeWorkbookIntent(result);
+}
+
+// =====================
+// STT
+// =====================
+function initStt(){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){ $('sttStatus').textContent='此瀏覽器不支援語音辨識'; $('btnStt').disabled=true; $('btnStt').style.opacity='0.5'; return null; }
+  const rec=new SR(); rec.lang=$('sttLang').value; rec.continuous=true; rec.interimResults=true;
+  rec.onstart=()=>{ sttRunning=true; lastSentMs=Date.now(); updateVoiceButtons(); $('sttStatus').textContent='監聽中…'; };
+  rec.onend=()=>{ sttRunning=false; updateVoiceButtons(); $('sttStatus').textContent='已停止'; $('sttInterim').textContent=''; };
+  rec.onerror=e=>$('sttStatus').textContent='錯誤：'+e.error;
+  rec.onresult=ev=>{
+    let interim='',fin='';
+    for(let i=ev.resultIndex;i<ev.results.length;i++){ const t=ev.results[i][0].transcript; ev.results[i].isFinal?fin+=t:interim+=t; }
+    $('sttInterim').textContent=interim.trim();
+    if(fin.trim()){
+      const now=Date.now(), dur=(now-(lastSentMs||now))/1000; lastSentMs=now;
+      if(dur>0.5) updateRate(fin.trim(), dur);
+      const parts=fin.split(/(?<=[。！？!?])/).map(x=>x.trim()).filter(Boolean);
+      const list=parts.length?parts:[fin.trim()];
+      if(voiceSession) voiceSession.transcripts.push(...list);
+      for(const s of list){
+        const li=document.createElement('li');
+        li.style.cssText='border:1px solid rgba(201,151,62,0.2);background:rgba(12,9,5,0.5);border-radius:2px;padding:5px 8px;font-size:0.82rem';
+        li.textContent=s; $('sttSentences').appendChild(li); handleSentence(s);
+      }
+      $('sttInterim').textContent=''; $('sttStatus').textContent='收到一句，等待下一句…';
+    }
+  };
+  return rec;
+}
+
+// =====================
+// Wire Events
+// =====================
+useBuiltInRules();
+stt = initStt();
+saveBookmarks(); // init bookmark count display
+updateVoiceButtons();
+
+(()=>{ const secure=location.protocol==='https:'||location.hostname==='localhost'||location.hostname==='127.0.0.1'; if(!secure) $('httpsWarn').classList.remove('hidden'); })();
+loadFaceApi();
+loadImgModel();
+autoLoadBundledData();
+
+$('btnDlPoemsTpl').onclick = downloadPoemsTemplate;
+$('btnDlRulesTpl').onclick = downloadRulesTemplate;
+$('poemsFile').addEventListener('change', async e=>{ const f=e.target.files?.[0]; if(!f) return; $('poemsStatus').textContent='讀取中…'; try{ await loadPoemsExcel(f); }catch(err){ console.error(err); $('poemsStatus').textContent='❌ 讀取失敗：'+(err.message||err); setStatus('詩詞 Excel 讀取失敗','err'); } });
+$('rulesFile').addEventListener('change', async e=>{ const f=e.target.files?.[0]; if(!f) return; $('rulesStatus').textContent='讀取中…'; try{ await loadRulesExcel(f); }catch(err){ console.error(err); useBuiltInRules(); $('rulesStatus').textContent='❌ 讀取失敗（改用內建規則）：'+(err.message||err); } });
+$('btnLoadBundled').onclick = () => autoLoadBundledData(true);
+$('btnFace').onclick = () => faceActive ? stopFace() : startFace();
+$('btnImg').onclick = () => $('imgFile').click();
+$('imgFile').addEventListener('change', e=>classifyImage(e.target.files?.[0]));
+$('btnVolume').onclick = () => (volActive || sttRunning) ? stopVoiceAnalysis('manual') : startVoiceAnalysis();
+$('btnClearPoems').onclick = () => { renderPoems([]); setReply('已清空詩詞結果。'); };
+$('sttLang').addEventListener('change', ()=>{ if(sttRunning&&stt) try{ stt.stop(); }catch(_){} stt=initStt(); $('sttStatus').textContent='語言已切換，待命'; });
+$('btnStt').onclick = () => { if(!stt && !navigator.mediaDevices?.getUserMedia) return; (volActive || sttRunning) ? stopVoiceAnalysis('manual') : startVoiceAnalysis(); };
+$('btnClearStt').onclick = () => { $('sttSentences').innerHTML=''; $('sttInterim').textContent=''; setReply('已清空語音句子。'); };
+$('btnAskGemini').onclick = askGeminiFromInput;
+$('btnGeminiHealth').onclick = pingGeminiHealth;
+$('txtGemini').addEventListener('keydown', e => { if(e.key === 'Enter') askGeminiFromInput(); });
+
+setStatus('待命','idle');
+pingGeminiHealth();
