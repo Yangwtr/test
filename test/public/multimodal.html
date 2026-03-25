@@ -2508,6 +2508,10 @@ pingGeminiHealth();
   let ttsSpeaking = false;
   let faceStableSinceMs = null;
   let frontConversationLog = [];
+  let qaSilenceTimer = null;
+  let qaBufferedFinalText = '';
+  let qaAutoRunning = false;
+  let qaProcessing = false;
 
   async function ensureMicAccess(){
     if(!navigator.mediaDevices?.getUserMedia) return true;
@@ -2713,10 +2717,48 @@ pingGeminiHealth();
     analysisRecRunning = false;
   }
 
+  function clearQaSilenceTimer(){
+    if(qaSilenceTimer){ clearTimeout(qaSilenceTimer); qaSilenceTimer = null; }
+  }
+
+  async function flushQaBufferedSpeech(){
+    const text = String(qaBufferedFinalText || '').trim();
+    clearQaSilenceTimer();
+    qaBufferedFinalText = '';
+    if(!text || qaProcessing) return;
+    qaProcessing = true;
+    try{
+      if(stt && qaRecRunning){ try{ stt.stop(); }catch(_){} }
+      const li = document.createElement('li');
+      li.style.cssText='border:1px solid rgba(201,151,62,0.2);background:rgba(12,9,5,0.5);border-radius:2px;padding:5px 8px;font-size:0.82rem';
+      li.textContent = text;
+      $('sttSentences').appendChild(li);
+      if($('txtGemini')) $('txtGemini').value = text;
+      $('sttInterim').textContent = '';
+      $('sttStatus').textContent = '已偵測停頓 2 秒，正在回答…';
+      await askGeminiFromInput();
+      $('sttStatus').textContent = '回覆完成，繼續監聽中…';
+    }catch(err){
+      $('sttStatus').textContent = '語音問答處理失敗，請再試一次。';
+    }finally{
+      qaProcessing = false;
+      if(qaAutoRunning){
+        setTimeout(() => {
+          try{ if(stt && !qaRecRunning){ stt.lang = $('sttLang')?.value || 'zh-TW'; stt.start(); } }catch(_){}
+        }, 180);
+      }
+      updateVoiceButtons();
+    }
+  }
+
   function stopQaStt(){
+    qaAutoRunning = false;
+    clearQaSilenceTimer();
+    qaBufferedFinalText = '';
     if(stt && qaRecRunning){ try{ stt.stop(); }catch(_){} }
     qaRecRunning = false;
     sttRunning = false;
+    $('sttInterim').textContent = '';
     updateVoiceButtons();
   }
 
@@ -2811,8 +2853,7 @@ pingGeminiHealth();
       qaRecRunning = false;
       sttRunning = false;
       updateVoiceButtons();
-      $('sttInterim').textContent = '';
-      if(!voiceChatActive) $('sttStatus').textContent = '已停止';
+      if(!qaAutoRunning && !voiceChatActive) $('sttStatus').textContent = '已停止';
     };
     rec.onerror = e => {
       const err = e?.error || 'unknown';
@@ -2825,19 +2866,13 @@ pingGeminiHealth();
         const t = ev.results[i][0].transcript;
         ev.results[i].isFinal ? fin += t : interim += t;
       }
-      $('sttInterim').textContent = interim.trim();
-      if(fin.trim()){
-        const parts = fin.split(/(?<=[。！？!?])/).map(x => x.trim()).filter(Boolean);
-        const list = parts.length ? parts : [fin.trim()];
-        for(const s of list){
-          const li = document.createElement('li');
-          li.style.cssText='border:1px solid rgba(201,151,62,0.2);background:rgba(12,9,5,0.5);border-radius:2px;padding:5px 8px;font-size:0.82rem';
-          li.textContent = s;
-          $('sttSentences').appendChild(li);
-          handleSentence(s);
-        }
-        $('sttInterim').textContent = '';
-        $('sttStatus').textContent = '收到一句，等待下一句…';
+      if(fin.trim()) qaBufferedFinalText = `${qaBufferedFinalText} ${fin}`.trim();
+      const previewText = `${qaBufferedFinalText} ${interim}`.trim();
+      $('sttInterim').textContent = previewText;
+      if(previewText){
+        $('sttStatus').textContent = '收音中…停止說話 2 秒後會自動回覆';
+        clearQaSilenceTimer();
+        qaSilenceTimer = setTimeout(() => { flushQaBufferedSpeech(); }, 2000);
       }
     };
     return rec;
@@ -2848,6 +2883,9 @@ pingGeminiHealth();
     stopVoiceChat(false);
     const ok = await ensureMicAccess();
     if(!ok) return;
+    qaAutoRunning = true;
+    clearQaSilenceTimer();
+    qaBufferedFinalText = '';
     if(!stt) stt = initStt();
     if(!stt) return;
     try{ stt.lang = $('sttLang')?.value || 'zh-TW'; stt.start(); }catch(_){ }
