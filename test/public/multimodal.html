@@ -2739,6 +2739,19 @@ pingGeminiHealth();
       $('sttInterim').textContent = '';
       $('sttStatus').textContent = '已偵測停頓 2 秒，正在回答…';
       await askGeminiFromInput();
+      const qaText = (bridgePlainText('qaReply', '') || '').trim();
+      if(!qaText || qaText === '（尚未開始）'){
+        if(geminiAvailable){
+          const shouldSpeak = !!($('chkSpeakReply')?.checked);
+          const data = await requestGemini(text, { mode:'voice_auto', reason:'qa_silence_flush', concise:true, withAudio:shouldSpeak, voiceName:'Leda' });
+          const replyText = formatGeminiReply('', data);
+          setReply(replyText);
+          pushFrontConversationLog('assistant', replyText);
+          if(shouldSpeak) await speakGeminiAnswer(data);
+        }else{
+          setReply('目前無法取得回覆，請確認 Gemini 後端是否就緒。');
+        }
+      }
       $('sttStatus').textContent = '回覆完成，繼續監聽中…';
     }catch(err){
       $('sttStatus').textContent = '語音問答處理失敗，請再試一次。';
