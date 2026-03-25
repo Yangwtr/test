@@ -573,6 +573,7 @@
     const engineFrame = $('engineFrame');
     let engineWin = null;
     let engineDoc = null;
+    let eventsBound = false;
 
     function escapeHtml(str='') {
       return str.replace(/[&<>"]/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[s]));
@@ -693,14 +694,8 @@
         const bg = item.role === 'user' ? 'var(--primary-weak)' : 'var(--soft-yellow)';
         const color = item.role === 'user' ? 'var(--primary)' : 'var(--text)';
         const align = item.role === 'user' ? 'end' : 'start';
-<<<<<<< codex/add-speech-bubble-and-input-text-feature-w47o8q
         return `<div style="justify-self:${align};display:inline-flex;flex-direction:column;gap:2px;padding:4px 7px;border-radius:12px;background:${bg};border:1px solid var(--line);width:fit-content;max-width:86%;">\n          <div style="font-size:0.74rem;font-weight:700;color:${color};line-height:1.15;">${label}</div>\n          <div style="white-space:pre-wrap;line-height:1.35;">${escapeHtml(item.text)}</div>\n        </div>`;
-=======
-        return `<div style="justify-self:${align};padding:5px 8px;border-radius:12px;background:${bg};border:1px solid var(--line);width:fit-content;max-width:86%;">
-          <div style="font-size:0.75rem;font-weight:700;color:${color};margin-bottom:2px;line-height:1.2;">${label}</div>
-          <div style="white-space:pre-wrap;line-height:1.45;">${escapeHtml(item.text)}</div>
-        </div>`;
->>>>>>> main
+        return `<div style="justify-self:${align};display:inline-flex;flex-direction:column;gap:2px;padding:4px 7px;border-radius:12px;background:${bg};border:1px solid var(--line);width:fit-content;max-width:86%;">\n          <div style="font-size:0.74rem;font-weight:700;color:${color};line-height:1.15;">${label}</div>\n          <div style="white-space:pre-wrap;line-height:1.35;">${escapeHtml(item.text)}</div>\n        </div>`;
       }).join('');
       box.scrollTop = Math.min(prevTop, Math.max(0, box.scrollHeight - box.clientHeight));
       state.conversationRenderToken = renderToken;
@@ -1055,14 +1050,10 @@
       const bridge = await getBridgeState();
       if (!bridge) return;
       const defaultReply = '你的問題送出後，我會在這裡回答你。';
-<<<<<<< codex/add-speech-bubble-and-input-text-feature-w47o8q
       const placeholderReplies = new Set([defaultReply, '（尚未開始）', '(尚未開始)', '尚未開始']);
       const rawReply = bridge.qaReply || defaultReply;
       const normalizedReply = stripSpeechDecorations(rawReply);
       const reply = placeholderReplies.has(normalizedReply) ? defaultReply : rawReply;
-=======
-      const reply = bridge.qaReply || defaultReply;
->>>>>>> main
       state.lastAnswerText = reply;
       $('text-ask-answer').textContent = reply;
       $('text-ask-voice-status').textContent = bridge.voiceChatStatus || bridge.sttStatus || '語音問答待命';
@@ -1230,6 +1221,8 @@
     }
 
     function initEvents() {
+      if (eventsBound) return;
+      eventsBound = true;
       $('btn-teacher-mode').onclick = openTeacherPage;
       $('select-reading-poem').onchange = async () => { const bridge = await getBridgeState(); renderSelectedReadingPoem(bridge, $('select-reading-poem').value); };
       $('btn-action-open-multimodal').onclick = openTeacherPage;
@@ -1385,10 +1378,22 @@
       setInterval(() => { updateAll(); }, 800);
     }
 
+
+    // Bind UI controls immediately so buttons are not dead while engine is loading.
+    initEvents();
+    renderConversationLog();
+    setMode('ask');
+
     engineFrame.addEventListener('load', () => {
       // Give the engine page a moment to register globals and auto-load bundled data.
       setTimeout(onEngineLoaded, 1200);
     });
+
+    setTimeout(() => {
+      if (!state.engineReady) {
+        $('text-ask-voice-status').textContent = '功能引擎啟動中，請稍候 1-2 秒再試。';
+      }
+    }, 2200);
   </script>
 </body>
 </html>
