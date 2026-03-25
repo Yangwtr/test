@@ -2738,6 +2738,7 @@ pingGeminiHealth();
       if($('txtGemini')) $('txtGemini').value = text;
       $('sttInterim').textContent = '';
       $('sttStatus').textContent = '已偵測停頓 2 秒，正在回答…';
+<<<<<<< codex/add-speech-bubble-and-input-text-feature-w47o8q
       const shouldSpeak = !!($('chkSpeakReply')?.checked);
       pushFrontConversationLog('user', text);
       if(poemsLoaded){
@@ -2751,15 +2752,26 @@ pingGeminiHealth();
       const qaText = cleanGeminiText((bridgePlainText('qaReply', '') || '').trim());
       if(!qaText || qaText === '（尚未開始）'){
         if(geminiAvailable){
+=======
+      await askGeminiFromInput();
+      const qaText = (bridgePlainText('qaReply', '') || '').trim();
+      if(!qaText || qaText === '（尚未開始）'){
+        if(geminiAvailable){
+          const shouldSpeak = !!($('chkSpeakReply')?.checked);
+>>>>>>> main
           const data = await requestGemini(text, { mode:'voice_auto', reason:'qa_silence_flush', concise:true, withAudio:shouldSpeak, voiceName:'Leda' });
           const replyText = formatGeminiReply('', data);
           setReply(replyText);
           pushFrontConversationLog('assistant', replyText);
           if(shouldSpeak) await speakGeminiAnswer(data);
         }else{
+<<<<<<< codex/add-speech-bubble-and-input-text-feature-w47o8q
           const failMsg = '目前無法取得回覆，請確認 Gemini 後端是否就緒。';
           setReply(failMsg);
           pushFrontConversationLog('assistant', failMsg);
+=======
+          setReply('目前無法取得回覆，請確認 Gemini 後端是否就緒。');
+>>>>>>> main
         }
       }
       $('sttStatus').textContent = '回覆完成，繼續監聽中…';
