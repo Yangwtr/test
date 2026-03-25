@@ -387,8 +387,9 @@
               <div id="quiz-options-front" class="mode-options-grid"></div>
               <div id="text-quiz-result" class="card result-box">作答後，這裡會顯示是否答對、原因與修正提醒。</div>
               <div id="card-quiz-related-poem" class="card">
-                <h3 class="card-title">這一題對應的詩詞</h3>
-                <div class="poem-meta-grid">
+                <h3 class="card-title">提示</h3>
+                <div id="text-quiz-hint" class="helper-text">每題產生後，這裡會提供一段不暴雷提示。</div>
+                <div class="poem-meta-grid" style="display:none;">
                   <div class="label">詩名：</div><div id="text-quiz-poem-title">—</div>
                   <div class="label">包含物：</div><div id="text-quiz-poem-objects">—</div>
                   <div class="label">情緒：</div><div id="text-quiz-poem-emotion">—</div>
@@ -560,7 +561,9 @@
       ttsDisabledReason: '',
       lastSpokenReplyKey: '',
       conversationRenderToken: '',
-      engineReloadTried: false
+      engineReloadTried: false,
+      quizHintCache: new Map(),
+      quizHintPendingKey: ''
     };
 
     const $ = id => document.getElementById(id);
@@ -675,8 +678,7 @@
       const clean = stripSpeechDecorations(text || '').trim();
       if (!clean) return;
       const key = `${role}::${clean}`;
-      const last = state.conversationLog[state.conversationLog.length - 1];
-      if (last && last.key === key) return;
+      if (state.conversationLog.some(item => item.key === key)) return;
       state.conversationLog.push({ role, text: clean, key });
       if (state.conversationLog.length > 18) state.conversationLog = state.conversationLog.slice(-18);
       renderConversationLog();
@@ -1038,10 +1040,12 @@
       $('text-emotion-result').textContent = '我感受到你的心情是……';
       $('text-quiz-result').textContent = '作答後，這裡會顯示是否答對、原因與修正提醒。';
       $('text-quiz-question').textContent = '載入詩詞資料後，按「開始闖關」就能由 AI 主動出題。';
+      $('text-quiz-hint').textContent = '每題產生後，這裡會提供一段不暴雷提示。';
       $('quiz-options-front').innerHTML = '';
       ['ask','quiz','image','emotion'].forEach(prefix => renderPoemMeta(prefix, null));
       state.activePoem = null;
       state.readingPoemOptions = [];
+      state.quizHintCache.clear();
       state.readingSelectedKey = '';
       $('select-reading-poem').innerHTML = '<option value=>目前尚未有推薦詩詞</option>';
       $('select-reading-poem').disabled = true;
@@ -1091,6 +1095,39 @@
       else $('text-ask-poem-title').textContent = bridge.currentPoemText === '未選取' ? '—' : bridge.currentPoemText;
     }
 
+
+    async function ensureQuizHint(question='', options=[]) {
+      const q = stripSpeechDecorations(question || '').trim();
+      if (!q || q.includes('載入詩詞資料後')) {
+        $('text-quiz-hint').textContent = '每題產生後，這裡會提供一段不暴雷提示。';
+        return;
+      }
+      if (state.quizHintCache.has(q)) {
+        $('text-quiz-hint').textContent = state.quizHintCache.get(q);
+        return;
+      }
+      if (state.quizHintPendingKey === q) return;
+      state.quizHintPendingKey = q;
+      $('text-quiz-hint').textContent = 'Gemini 正在整理提示…';
+      try {
+        const optionText = (options || []).map((o, i) => `${i + 1}. ${o?.text || ''}`).join('\n');
+        const prompt = `你是詩詞老師。請根據題目給一段不暴雷、20字內、適合國小生的提示。\n題目：${q}\n選項：\n${optionText}`;
+        const res = await fetch('/api/gemini/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question: prompt, mode: 'quiz_hint', reason: 'quiz_hint', concise: true })
+        });
+        const data = await res.json().catch(() => ({}));
+        const hint = stripSpeechDecorations(data?.answer || data?.text || '').trim() || '先抓題目中的關鍵物象，再比對意境。';
+        state.quizHintCache.set(q, hint);
+        $('text-quiz-hint').textContent = hint;
+      } catch (_) {
+        $('text-quiz-hint').textContent = '先抓題目中的關鍵物象，再比對意境。';
+      } finally {
+        if (state.quizHintPendingKey === q) state.quizHintPendingKey = '';
+      }
+    }
+
     async function syncQuiz() {
       const bridge = await getBridgeState();
       if (!bridge) return;
@@ -1112,6 +1149,7 @@
         out.appendChild(vBtn);
       });
       if (bridge.currentPoem) applyActivePoem(bridge.currentPoem, 'quiz');
+      await ensureQuizHint(bridge.quizQuestion || '', bridge.quizOptions || []);
     }
 
     async function syncImage() {
