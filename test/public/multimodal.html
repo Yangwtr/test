@@ -557,6 +557,8 @@ let qaWorkbookConfig = {
 let currentPoem = null;
 let imageMatchedPoems = [];
 let emotionMatchedPoems = [];
+let imageTopLabel = '';
+let imageTopConfidence = 0;
 let faceSnapshotDataUrl = '';
 let geminiAvailable = false;
 let lastIntentResult = null;
@@ -2147,6 +2149,8 @@ async function classifyImage(file){
 
         renderPredictions(top.map(r => ({label:r.label, confidence:r.confidence || 0})));
         const best = top[0] || null;
+        imageTopLabel = best?.label || '';
+        imageTopConfidence = Number(best?.confidence || 0);
         let found = [];
         if(best){
           for(const candidate of normalizeLabelCandidates(best.label)){
@@ -2170,6 +2174,7 @@ async function classifyImage(file){
         resolve({ top, best, found, backend });
       }catch(err){
         console.error(err);
+        imageTopLabel = ''; imageTopConfidence = 0;
         $('imgRawResult').innerHTML = `<div class="text-xs text-center py-3" style="color:#e5a9a2">辨識失敗：${escapeHtml(err.message || String(err))}</div>`;
         $('imgCatResult').innerHTML = '<div class="text-xs text-center" style="color:var(--ink-gray)">請重新選擇圖片後再試一次</div>';
         try{ buildCatMapLegend(); }catch(_){ }
@@ -2178,6 +2183,7 @@ async function classifyImage(file){
       }
     };
     img.onerror = () => {
+      imageTopLabel = ''; imageTopConfidence = 0;
       $('imgRawResult').innerHTML = '<div class="text-xs text-center py-3" style="color:#e5a9a2">圖片載入失敗</div>';
       $('imgCatResult').innerHTML = '<div class="text-xs text-center" style="color:var(--ink-gray)">請重新選擇圖片</div>';
       setStatus('圖片載入失敗','err');
@@ -2739,6 +2745,8 @@ pingGeminiHealth();
       $('sttInterim').textContent = '';
       $('sttStatus').textContent = '已偵測停頓 2 秒，正在回答…';
       const shouldSpeak = !!($('chkSpeakReply')?.checked);
+      clearFrontConversationLog();
+      if($('sttSentences')) $('sttSentences').innerHTML = '';
       pushFrontConversationLog('user', text);
       if(poemsLoaded){
         await handleSentence(text, { skipLog: true });
@@ -2762,6 +2770,7 @@ pingGeminiHealth();
           pushFrontConversationLog('assistant', failMsg);
         }
       }
+      if($('txtGemini')) $('txtGemini').value = '';
       $('sttStatus').textContent = '回覆完成，繼續監聽中…';
     }catch(err){
       $('sttStatus').textContent = '語音問答處理失敗，請再試一次。';
@@ -2879,11 +2888,15 @@ pingGeminiHealth();
       qaRecRunning = false;
       sttRunning = false;
       updateVoiceButtons();
+      if(qaAutoRunning && !qaProcessing && !voiceChatActive){
+        setTimeout(() => { try { rec.start(); } catch(_){} }, 260);
+        return;
+      }
       if(!qaAutoRunning && !voiceChatActive) $('sttStatus').textContent = '已停止';
     };
     rec.onerror = e => {
       const err = e?.error || 'unknown';
-      if (err === 'no-speech') { $('sttStatus').textContent = '我剛剛沒有聽到聲音，請再說一次。'; return; }
+      if (err === 'no-speech') { $('sttStatus').textContent = '我剛剛沒有聽到聲音，持續收音中…'; if(qaAutoRunning && !qaProcessing){ setTimeout(() => { try{ rec.start(); }catch(_){} }, 260); } return; }
       $('sttStatus').textContent = err === 'not-allowed' ? '請先允許麥克風權限，再試一次。' : '語音辨識暫時不穩定，請再試一次。';
     };
     rec.onresult = ev => {
@@ -3465,6 +3478,8 @@ function readQuizQuestion(){
       currentPoem: bridgePoem(currentPoem),
       imageMatchedPoems: imageMatchedPoems.map(bridgePoem).filter(Boolean),
       emotionMatchedPoems: emotionMatchedPoems.map(bridgePoem).filter(Boolean),
+      imageTopLabel: imageTopLabel || '',
+      imageTopConfidence: Number(imageTopConfidence || 0),
       faceSnapshotDataUrl: faceSnapshotDataUrl || '',
       currentPoemText: bridgePlainText('currentPoem', '未選取'),
       qaReply: bridgePlainText('qaReply', ''),
@@ -3526,6 +3541,7 @@ function readQuizQuestion(){
     if($('imgFile')) $('imgFile').value = '';
     if($('imgPreview')){ $('imgPreview').src = ''; $('imgPreview').classList.add('hidden'); }
     if($('imgHint')) $('imgHint').classList.remove('hidden');
+    imageTopLabel = ''; imageTopConfidence = 0;
     if($('imgRawResult')) $('imgRawResult').innerHTML = '<div class="text-xs text-center py-4" style="color:var(--ink-gray)">等待辨識</div>';
     if($('imgCatResult')) $('imgCatResult').innerHTML = '<div class="text-xs text-center" style="color:var(--ink-gray)">對應結果會顯示於此</div>';
     imageMatchedPoems = [];

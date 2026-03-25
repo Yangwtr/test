@@ -1143,7 +1143,14 @@
     async function syncEmotion() {
       const bridge = await getBridgeState();
       if (!bridge) return;
-      $('text-emotion-result').textContent = bridge.emotionText || '我感受到你的心情是……';
+      const baseEmotion = bridge.emotionText || '我感受到你的心情是……';
+      const emotionPoems = Array.isArray(bridge.emotionMatchedPoems) ? bridge.emotionMatchedPoems : [];
+      if (emotionPoems.length) {
+        const topNames = emotionPoems.slice(0, 5).map((p, idx) => `${idx + 1}. ${p.name || '未命名詩'}`);
+        $('text-emotion-result').textContent = `${baseEmotion}\n\n我另外推薦這些同情緒詩詞：\n${topNames.join('\n')}`;
+      } else {
+        $('text-emotion-result').textContent = baseEmotion;
+      }
       const box = $('media-emotion-preview');
       if (bridge.faceSnapshotDataUrl) {
         box.innerHTML = `<div><img src="${bridge.faceSnapshotDataUrl}" alt="表情截圖"><div class="helper-text" style="margin-top:8px;">已保留 1 秒辨識完成時的表情截圖，方便和偵測結果比對。</div></div>`;
@@ -1361,7 +1368,17 @@
         withEngine((eng) => eng.clearImageSession && eng.clearImageSession());
       };
       $('btn-image-again').onclick = () => $('btn-image-start').click();
-      $('btn-image-read-result').onclick = () => speakText($('text-image-result').textContent);
+      $('btn-image-read-result').onclick = async () => {
+        const bridge = await getBridgeState();
+        const bestLabel = stripSpeechDecorations(bridge?.imageTopLabel || '');
+        const bestPct = Number(bridge?.imageTopConfidence || 0);
+        const firstPoem = (Array.isArray(bridge?.imageMatchedPoems) ? bridge.imageMatchedPoems : [])[0];
+        const parts = [];
+        if (bestLabel) parts.push(`最高辨識是 ${bestLabel}，大約 ${(bestPct * 100).toFixed(1)}%。`);
+        if (firstPoem?.name) parts.push(`我先推薦第一首《${firstPoem.name}》。`);
+        if (!parts.length) parts.push('目前還沒有可朗讀的辨識結果。');
+        speakText(parts.join(''));
+      };
 
       $('btn-reading-start').onclick = () => withEngine((eng) => { eng.startVoiceAnalysis && eng.startVoiceAnalysis(); setMascotState('listening', '請開始朗讀，我正在聽。'); });
       $('btn-reading-stop').onclick = async () => { await withEngine((eng) => eng.stopVoiceAnalysis && eng.stopVoiceAnalysis('manual')); await syncReading(); };
@@ -1382,7 +1399,13 @@
         else speakText('沒關係，我陪你慢慢來。');
         setMascotState('comforting', uiText.bubbles.comforting);
       };
-      $('btn-emotion-read-reason').onclick = () => speakText($('text-emotion-result').textContent);
+      $('btn-emotion-read-reason').onclick = async () => {
+        const bridge = await getBridgeState();
+        const firstPoem = (Array.isArray(bridge?.emotionMatchedPoems) ? bridge.emotionMatchedPoems : [])[0];
+        const baseEmotion = stripSpeechDecorations(bridge?.emotionText || '我感受到你的心情。');
+        const summary = firstPoem?.name ? `${baseEmotion}。我先推薦第一首《${firstPoem.name}》。` : baseEmotion;
+        speakText(summary);
+      };
     }
 
     async function onEngineLoaded() {
