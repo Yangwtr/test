@@ -2720,6 +2720,26 @@ pingGeminiHealth();
     }
   };
 
+
+
+  function scheduleQaRestart(delay=260, retries=3){
+    if(!qaAutoRunning || qaProcessing) return;
+    setTimeout(() => {
+      const startWithRetry = (left) => {
+        if(!qaAutoRunning || qaProcessing) return;
+        try{
+          if(stt && !qaRecRunning){
+            stt.lang = $('sttLang')?.value || 'zh-TW';
+            stt.start();
+            return;
+          }
+        }catch(_){ }
+        if(left > 0) setTimeout(() => startWithRetry(left - 1), 260);
+      };
+      startWithRetry(retries);
+    }, delay);
+  }
+
   function stopAnalysisRecognizer(){
     if(analysisRec){ try{ analysisRec.onend = ()=>{}; analysisRec.stop(); }catch(_){} }
     analysisRecRunning = false;
@@ -2778,11 +2798,7 @@ pingGeminiHealth();
       $('sttStatus').textContent = '語音問答處理失敗，請再試一次。';
     }finally{
       qaProcessing = false;
-      if(qaAutoRunning){
-        setTimeout(() => {
-          try{ if(stt && !qaRecRunning){ stt.lang = $('sttLang')?.value || 'zh-TW'; stt.start(); } }catch(_){}
-        }, 180);
-      }
+      if(qaAutoRunning) scheduleQaRestart(180, 4);
       updateVoiceButtons();
     }
   }
@@ -2891,14 +2907,14 @@ pingGeminiHealth();
       sttRunning = false;
       updateVoiceButtons();
       if(qaAutoRunning && !qaProcessing && !voiceChatActive){
-        setTimeout(() => { try { rec.start(); } catch(_){} }, 260);
+        scheduleQaRestart(260, 4);
         return;
       }
       if(!qaAutoRunning && !voiceChatActive) $('sttStatus').textContent = '已停止';
     };
     rec.onerror = e => {
       const err = e?.error || 'unknown';
-      if (err === 'no-speech') { $('sttStatus').textContent = '我剛剛沒有聽到聲音，持續收音中…'; if(qaAutoRunning && !qaProcessing){ setTimeout(() => { try{ rec.start(); }catch(_){} }, 260); } return; }
+      if (err === 'no-speech') { $('sttStatus').textContent = '我剛剛沒有聽到聲音，持續收音中…'; if(qaAutoRunning && !qaProcessing){ scheduleQaRestart(260, 4); } return; }
       $('sttStatus').textContent = err === 'not-allowed' ? '請先允許麥克風權限，再試一次。' : '語音辨識暫時不穩定，請再試一次。';
     };
     rec.onresult = ev => {

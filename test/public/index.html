@@ -1096,6 +1096,17 @@
     }
 
 
+    function buildLocalQuizHint(question='', options=[]) {
+      const q = stripSpeechDecorations(question || '').toLowerCase();
+      const optText = (options || []).map(o => stripSpeechDecorations(o?.text || '')).join(' ');
+      if (/下一句|接龍|下半句/.test(q)) return '先找語意最連貫、節奏最順的句子。';
+      if (/錯|抓漏|改字|哪個字/.test(q)) return '先比對平常最熟的原句，再找突兀字。';
+      if (/心情|情緒|安慰/.test(q)) return '先抓題目情緒，再選意境最接近的一首。';
+      if (/白話|反推|猜哪首/.test(q)) return '把白話中的景物與情緒當關鍵字去對照。';
+      if (/畫面|物品|意象|點餐/.test(q) || /月|山|花|風|雨|夜/.test(optText)) return '先找最明顯意象，再對應常見詩詞場景。';
+      return '先圈出關鍵字，再排除最不符合題意的選項。';
+    }
+
     async function ensureQuizHint(question='', options=[]) {
       const q = stripSpeechDecorations(question || '').trim();
       if (!q || q.includes('載入詩詞資料後')) {
@@ -1106,26 +1117,9 @@
         $('text-quiz-hint').textContent = state.quizHintCache.get(q);
         return;
       }
-      if (state.quizHintPendingKey === q) return;
-      state.quizHintPendingKey = q;
-      $('text-quiz-hint').textContent = 'Gemini 正在整理提示…';
-      try {
-        const optionText = (options || []).map((o, i) => `${i + 1}. ${o?.text || ''}`).join('\n');
-        const prompt = `你是詩詞老師。請根據題目給一段不暴雷、20字內、適合國小生的提示。\n題目：${q}\n選項：\n${optionText}`;
-        const res = await fetch('/api/gemini/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ question: prompt, mode: 'quiz_hint', reason: 'quiz_hint', concise: true })
-        });
-        const data = await res.json().catch(() => ({}));
-        const hint = stripSpeechDecorations(data?.answer || data?.text || '').trim() || '先抓題目中的關鍵物象，再比對意境。';
-        state.quizHintCache.set(q, hint);
-        $('text-quiz-hint').textContent = hint;
-      } catch (_) {
-        $('text-quiz-hint').textContent = '先抓題目中的關鍵物象，再比對意境。';
-      } finally {
-        if (state.quizHintPendingKey === q) state.quizHintPendingKey = '';
-      }
+      const hint = buildLocalQuizHint(q, options || []);
+      state.quizHintCache.set(q, hint);
+      $('text-quiz-hint').textContent = hint;
     }
 
     async function syncQuiz() {
