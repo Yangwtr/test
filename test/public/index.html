@@ -698,7 +698,7 @@
         return;
       }
       box.innerHTML = state.conversationLog.map(item => {
-        const label = item.role === 'user' ? '你' : '公仔';
+        const label = item.role === 'user' ? '你' : '三光寶貝';
         const bg = item.role === 'user' ? 'var(--primary-weak)' : 'var(--soft-yellow)';
         const color = item.role === 'user' ? 'var(--primary)' : 'var(--text)';
         const align = item.role === 'user' ? 'end' : 'start';
@@ -1072,7 +1072,9 @@
       if (bridgeLog.length) mergeConversationLog(bridgeLog);
       else if (reply && reply !== defaultReply) appendConversationLog('assistant', reply);
       const latestUserText = [...bridgeLog].reverse().find(item => item.role === 'user')?.text || '';
-      const draftText = stripSpeechDecorations(bridge.sttInterimText || bridge.qaInputText || latestUserText || '').trim();
+      const bridgeUserText = stripSpeechDecorations(bridge.lastQaUserText || latestUserText || '').trim();
+      if (bridgeUserText) appendConversationLog('user', bridgeUserText);
+      const draftText = stripSpeechDecorations(bridge.sttInterimText || bridge.qaInputText || bridgeUserText || '').trim();
       if (draftText) {
         $('input-ask-question').value = draftText;
         if (bridge.voiceChatActive || bridge.qaRecRunning || bridge.voiceChatListening) {

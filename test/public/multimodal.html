@@ -560,6 +560,7 @@ let emotionMatchedPoems = [];
 let imageTopLabel = '';
 let imageTopConfidence = 0;
 let faceSnapshotDataUrl = '';
+let lastQaUserText = '';
 let geminiAvailable = false;
 let lastIntentResult = null;
 let currentPredictions = [];
@@ -2747,6 +2748,7 @@ pingGeminiHealth();
       const shouldSpeak = !!($('chkSpeakReply')?.checked);
       clearFrontConversationLog();
       if($('sttSentences')) $('sttSentences').innerHTML = '';
+      lastQaUserText = text;
       pushFrontConversationLog('user', text);
       if(poemsLoaded){
         await handleSentence(text, { skipLog: true });
@@ -3483,6 +3485,7 @@ function readQuizQuestion(){
       faceSnapshotDataUrl: faceSnapshotDataUrl || '',
       currentPoemText: bridgePlainText('currentPoem', '未選取'),
       qaReply: bridgePlainText('qaReply', ''),
+      lastQaUserText: lastQaUserText || '',
       qaInputText: bridgePlainText('txtGemini', ''),
       sttInterimText: bridgePlainText('sttInterim', ''),
       conversationLog: frontConversationLog.map(item => ({ role: item.role, text: item.text })),
@@ -3528,6 +3531,7 @@ function readQuizQuestion(){
     try{ stopVoiceChat(true); }catch(_){ }
     if($('txtGemini')) $('txtGemini').value = '';
     if($('qaReply')) $('qaReply').textContent = '';
+    lastQaUserText = '';
     if($('sttSentences')) $('sttSentences').innerHTML = '';
     if($('sttInterim')) $('sttInterim').textContent = '';
     if($('sttStatus')) $('sttStatus').textContent = '語音問答待命';
