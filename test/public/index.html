@@ -334,7 +334,7 @@
 
             <section id="panel-mode-ask" class="mode-panel">
               <div class="card">
-                <h3 class="card-title">問問公仔</h3>
+                <h3 class="card-title">問問三光寶貝</h3>
                 <p class="helper-text">你可以打字問我；按「與三光寶貝對話」後直接說話，系統會在 2 秒無人聲後自動回答並唸出回覆。</p>
                 <div class="input-shell" style="margin-top:10px;">
                   <textarea id="input-ask-question" placeholder="請輸入你想問的問題……"></textarea>
@@ -1078,15 +1078,14 @@
       const latestUserText = [...bridgeLog].reverse().find(item => item.role === 'user')?.text || '';
       const bridgeUserText = stripSpeechDecorations(bridge.lastQaUserText || latestUserText || '').trim();
       if (bridgeUserText) appendConversationLog('user', bridgeUserText);
-      const draftText = stripSpeechDecorations(bridge.sttInterimText || bridge.qaInputText || bridgeUserText || '').trim();
-      if (draftText) {
+      const isListening = !!(bridge.voiceChatActive || bridge.qaRecRunning || bridge.voiceChatListening || bridge.sttRunning);
+      const draftText = stripSpeechDecorations(bridge.sttInterimText || bridge.qaInputText || '').trim();
+      if (isListening && draftText) {
         $('input-ask-question').value = draftText;
-        if (bridge.voiceChatActive || bridge.qaRecRunning || bridge.voiceChatListening) {
-          setMascotState('listening', `我聽到你說：${draftText}`);
-        }
+        setMascotState('listening', `我聽到你說：${draftText}`);
       }
       const replyKey = stripSpeechDecorations(reply || '').trim();
-      if (replyKey && replyKey !== defaultReply && !bridge.voiceChatActive && state.lastSpokenReplyKey !== replyKey) {
+      if (replyKey && replyKey !== defaultReply && !bridge.voiceChatActive && !bridge.qaAutoResponding && state.lastSpokenReplyKey !== replyKey) {
         state.lastSpokenReplyKey = replyKey;
         await playGeminiNativeSpeech(replyKey, { bubbleText: '我來回答你。' });
       }

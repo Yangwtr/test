@@ -2520,6 +2520,7 @@ pingGeminiHealth();
   let qaLatestPreviewText = '';
   let qaAutoRunning = false;
   let qaProcessing = false;
+  let qaAutoResponding = false;
 
   async function ensureMicAccess(){
     if(!navigator.mediaDevices?.getUserMedia) return true;
@@ -2723,10 +2724,10 @@ pingGeminiHealth();
 
 
   function scheduleQaRestart(delay=260, retries=3){
-    if(!qaAutoRunning || qaProcessing) return;
+    if(!qaAutoRunning || qaProcessing || qaAutoResponding) return;
     setTimeout(() => {
       const startWithRetry = (left) => {
-        if(!qaAutoRunning || qaProcessing) return;
+        if(!qaAutoRunning || qaProcessing || qaAutoResponding) return;
         try{
           if(stt && !qaRecRunning){
             stt.lang = $('sttLang')?.value || 'zh-TW';
@@ -2756,6 +2757,7 @@ pingGeminiHealth();
     qaLatestPreviewText = '';
     if(!text || qaProcessing) return;
     qaProcessing = true;
+    qaAutoResponding = true;
     try{
       if(stt && qaRecRunning){ try{ stt.stop(); }catch(_){} }
       const li = document.createElement('li');
@@ -2798,6 +2800,7 @@ pingGeminiHealth();
       $('sttStatus').textContent = '語音問答處理失敗，請再試一次。';
     }finally{
       qaProcessing = false;
+      qaAutoResponding = false;
       if(qaAutoRunning) scheduleQaRestart(180, 4);
       updateVoiceButtons();
     }
@@ -2906,7 +2909,7 @@ pingGeminiHealth();
       qaRecRunning = false;
       sttRunning = false;
       updateVoiceButtons();
-      if(qaAutoRunning && !qaProcessing && !voiceChatActive){
+      if(qaAutoRunning && !qaProcessing && !qaAutoResponding && !voiceChatActive){
         scheduleQaRestart(260, 4);
         return;
       }
@@ -2914,7 +2917,7 @@ pingGeminiHealth();
     };
     rec.onerror = e => {
       const err = e?.error || 'unknown';
-      if (err === 'no-speech') { $('sttStatus').textContent = '我剛剛沒有聽到聲音，持續收音中…'; if(qaAutoRunning && !qaProcessing){ scheduleQaRestart(260, 4); } return; }
+      if (err === 'no-speech') { $('sttStatus').textContent = '我剛剛沒有聽到聲音，持續收音中…'; if(qaAutoRunning && !qaProcessing && !qaAutoResponding){ scheduleQaRestart(260, 4); } return; }
       $('sttStatus').textContent = err === 'not-allowed' ? '請先允許麥克風權限，再試一次。' : '語音辨識暫時不穩定，請再試一次。';
     };
     rec.onresult = ev => {
@@ -3504,6 +3507,7 @@ function readQuizQuestion(){
       lastQaUserText: lastQaUserText || '',
       qaInputText: bridgePlainText('txtGemini', ''),
       sttInterimText: bridgePlainText('sttInterim', ''),
+      qaAutoResponding: !!qaAutoResponding,
       conversationLog: frontConversationLog.map(item => ({ role: item.role, text: item.text })),
       sttStatus: bridgePlainText('sttStatus', ''),
       voiceChatStatus: bridgePlainText('voiceChatStatus', ''),
@@ -3548,6 +3552,7 @@ function readQuizQuestion(){
     if($('txtGemini')) $('txtGemini').value = '';
     if($('qaReply')) $('qaReply').textContent = '';
     lastQaUserText = '';
+    qaAutoResponding = false;
     if($('sttSentences')) $('sttSentences').innerHTML = '';
     if($('sttInterim')) $('sttInterim').textContent = '';
     if($('sttStatus')) $('sttStatus').textContent = '語音問答待命';
