@@ -138,7 +138,11 @@
       padding: 14px 16px;
       line-height: 1.65;
       font-weight: 600;
-      min-height: 92px;
+      min-height: 0;
+      width: fit-content;
+      max-width: 100%;
+      max-height: 180px;
+      overflow: auto;
     }
     #status-mascot-state {
       display: inline-flex;
@@ -314,7 +318,7 @@
           </div>
           <div id="panel-mascot-log" class="card result-box" style="margin-top:12px;">
             <div style="font-weight:700;margin-bottom:8px;">對話紀錄</div>
-            <div id="text-mascot-log" style="display:grid;gap:8px;max-height:220px;overflow:auto;">
+            <div id="text-mascot-log" style="display:grid;gap:8px;max-height:220px;overflow-y:auto;overflow-x:hidden;">
               <div class="helper-text">你說的話和公仔的回應，會記錄在這裡。</div>
             </div>
           </div>
@@ -331,15 +335,14 @@
             <section id="panel-mode-ask" class="mode-panel">
               <div class="card">
                 <h3 class="card-title">問問公仔</h3>
-                <p class="helper-text">你可以打字問我；按「語音輸入」會先把你的話轉成文字；按「直接跟公仔說」則會在你講完後自動回答並說出來。</p>
+                <p class="helper-text">你可以打字問我；按「與三光寶貝對話」後直接說話，系統會在 2 秒無人聲後自動回答並唸出回覆。</p>
                 <div class="input-shell" style="margin-top:10px;">
                   <textarea id="input-ask-question" placeholder="請輸入你想問的問題……"></textarea>
                   <button id="btn-ask-submit" class="control-btn primary-btn">送出問題</button>
                 </div>
                 <div class="inline-actions" style="margin-top:10px;">
-                  <button id="btn-ask-voice-start" class="control-btn primary-btn">語音輸入（轉文字）</button>
+                  <button id="btn-ask-voice-start" class="control-btn primary-btn">與三光寶貝對話</button>
                   <button id="btn-ask-voice-stop" class="control-btn danger-btn">停止收音</button>
-                  <button id="btn-ask-voice-chat" class="control-btn">直接跟公仔說</button>
                   <button id="btn-ask-read-aloud" class="control-btn">重播公仔回答</button>
                   <button id="btn-ask-reset" class="control-btn">清空對話</button>
                   <button id="btn-ask-more" class="control-btn">回答更詳細</button>
@@ -504,7 +507,7 @@
     </div>
   </div>
 
-  <iframe id="engineFrame" src="multimodal.html" title="多模態詩詞功能引擎"></iframe>
+  <iframe id="engineFrame" src="multimodal.html" title="多模態詩詞功能引擎" allow="microphone; camera; autoplay"></iframe>
   <audio id="audio-native-tts" preload="auto" playsinline></audio>
 
   <script>
@@ -554,7 +557,8 @@
       audioUnlocked: false,
       ttsCache: new Map(),
       ttsQuotaExceeded: false,
-      ttsDisabledReason: ''
+      ttsDisabledReason: '',
+      lastSpokenReplyKey: ''
     };
 
     const $ = id => document.getElementById(id);
@@ -683,12 +687,12 @@
         const label = item.role === 'user' ? '你' : '公仔';
         const bg = item.role === 'user' ? 'var(--primary-weak)' : 'var(--soft-yellow)';
         const color = item.role === 'user' ? 'var(--primary)' : 'var(--text)';
-        return `<div style="padding:10px 12px;border-radius:14px;background:${bg};border:1px solid var(--line);">
-          <div style="font-size:0.82rem;font-weight:700;color:${color};margin-bottom:4px;">${label}</div>
-          <div style="white-space:pre-wrap;line-height:1.7;">${escapeHtml(item.text)}</div>
+        const align = item.role === 'user' ? 'end' : 'start';
+        return `<div style="justify-self:${align};padding:8px 10px;border-radius:14px;background:${bg};border:1px solid var(--line);width:fit-content;max-width:86%;">
+          <div style="font-size:0.78rem;font-weight:700;color:${color};margin-bottom:3px;">${label}</div>
+          <div style="white-space:pre-wrap;line-height:1.6;">${escapeHtml(item.text)}</div>
         </div>`;
       }).join('');
-      box.scrollTop = box.scrollHeight;
     }
 
     function uniquePoems(list=[]) {
@@ -1031,13 +1035,15 @@
       $('text-reading-poem-source').textContent = '目前尚未收到推薦詩詞。';
       $('text-reading-poem-full').innerHTML = '請先在看圖猜詩或心情配詩取得推薦詩詞。';
       state.conversationLog = [];
+      state.lastSpokenReplyKey = '';
       renderConversationLog();
     }
 
     async function syncAsk() {
       const bridge = await getBridgeState();
       if (!bridge) return;
-      const reply = bridge.qaReply || '你的問題送出後，我會在這裡回答你。';
+      const defaultReply = '你的問題送出後，我會在這裡回答你。';
+      const reply = bridge.qaReply || defaultReply;
       state.lastAnswerText = reply;
       $('text-ask-answer').textContent = reply;
       $('text-ask-voice-status').textContent = bridge.voiceChatStatus || bridge.sttStatus || '語音問答待命';
@@ -1047,7 +1053,20 @@
         key: `${item.role === 'user' ? 'user' : 'assistant'}::${stripSpeechDecorations(item.text || '')}`
       })).filter(item => item.text) : [];
       if (bridgeLog.length) mergeConversationLog(bridgeLog);
-      else if (reply && reply !== '你的問題送出後，我會在這裡回答你。') appendConversationLog('assistant', reply);
+      else if (reply && reply !== defaultReply) appendConversationLog('assistant', reply);
+      const latestUserText = [...bridgeLog].reverse().find(item => item.role === 'user')?.text || '';
+      const draftText = stripSpeechDecorations(bridge.sttInterimText || bridge.qaInputText || latestUserText || '').trim();
+      if (draftText) {
+        $('input-ask-question').value = draftText;
+        if (bridge.voiceChatActive || bridge.qaRecRunning || bridge.voiceChatListening) {
+          setMascotState('listening', `我聽到你說：${draftText}`);
+        }
+      }
+      const replyKey = stripSpeechDecorations(reply || '').trim();
+      if (replyKey && replyKey !== defaultReply && !bridge.voiceChatActive && state.lastSpokenReplyKey !== replyKey) {
+        state.lastSpokenReplyKey = replyKey;
+        await playGeminiNativeSpeech(replyKey, { bubbleText: '我來回答你。' });
+      }
       renderConversationLog();
       if (bridge.currentPoem) applyActivePoem(bridge.currentPoem, 'ask');
       else $('text-ask-poem-title').textContent = bridge.currentPoemText === '未選取' ? '—' : bridge.currentPoemText;
@@ -1170,6 +1189,7 @@
       await syncAsk();
       appendConversationLog('assistant', state.lastAnswerText || $('text-ask-answer').textContent || '');
       setMascotState('speaking', '我找到答案了！');
+      state.lastSpokenReplyKey = stripSpeechDecorations(state.lastAnswerText || $('text-ask-answer').textContent || '').trim();
       await playGeminiNativeSpeech(state.lastAnswerText || $('text-ask-answer').textContent || '', { bubbleText: '我來回答你。' });
     }
 
@@ -1224,6 +1244,7 @@
         $('text-ask-answer').textContent = '你的問題送出後，我會在這裡回答你。';
         renderPoemMeta('ask', null);
         state.conversationLog = [];
+        state.lastSpokenReplyKey = '';
         renderConversationLog();
         withEngine((eng) => {
           eng.clearAskSession && eng.clearAskSession();
@@ -1236,13 +1257,6 @@
       });
       $('btn-ask-voice-start').onclick = async () => { await unlockAudioPlayback(); return withEngine((eng) => { eng.startQaStt && eng.startQaStt(); setMode('ask'); }); };
       $('btn-ask-voice-stop').onclick = () => withEngine((eng) => eng.stopQaStt && eng.stopQaStt());
-      $('btn-ask-voice-chat').onclick = async () => {
-        await unlockAudioPlayback();
-        stopGeminiNativeSpeech();
-        const bridge = await getBridgeState();
-        if (bridge?.voiceChatActive) await withEngine((eng) => eng.stopVoiceChat && eng.stopVoiceChat(true));
-        else await withEngine((eng) => eng.startVoiceChat && eng.startVoiceChat());
-      };
 
       $('select-quiz-mode').onchange = () => withEngine((eng, doc) => {
         const sel = doc.getElementById('quizMode');
