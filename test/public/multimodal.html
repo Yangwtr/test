@@ -3402,6 +3402,8 @@ function readQuizQuestion(){
       faceSnapshotDataUrl: faceSnapshotDataUrl || '',
       currentPoemText: bridgePlainText('currentPoem', '未選取'),
       qaReply: bridgePlainText('qaReply', ''),
+      qaInputText: bridgePlainText('txtGemini', ''),
+      sttInterimText: bridgePlainText('sttInterim', ''),
       conversationLog: frontConversationLog.map(item => ({ role: item.role, text: item.text })),
       sttStatus: bridgePlainText('sttStatus', ''),
       voiceChatStatus: bridgePlainText('voiceChatStatus', ''),
