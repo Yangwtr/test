@@ -559,7 +559,8 @@
       ttsQuotaExceeded: false,
       ttsDisabledReason: '',
       lastSpokenReplyKey: '',
-      conversationRenderToken: ''
+      conversationRenderToken: '',
+      engineReloadTried: false
     };
 
     const $ = id => document.getElementById(id);
@@ -584,6 +585,13 @@
       engineWin = engineFrame.contentWindow;
       try { engineDoc = engineWin.document; } catch (_) { engineDoc = null; }
       return engineWin;
+    }
+
+
+
+    function hasRequiredEngineApis(eng) {
+      const required = ['getFrontBridgeState', 'askGeminiFromInput', 'startFace', 'startVoiceAnalysis', 'startQaStt'];
+      return required.every(name => typeof eng?.[name] === 'function');
     }
 
     async function withEngine(cb, { rethrow = false } = {}) {
@@ -694,7 +702,6 @@
         const bg = item.role === 'user' ? 'var(--primary-weak)' : 'var(--soft-yellow)';
         const color = item.role === 'user' ? 'var(--primary)' : 'var(--text)';
         const align = item.role === 'user' ? 'end' : 'start';
-        return `<div style="justify-self:${align};display:inline-flex;flex-direction:column;gap:2px;padding:4px 7px;border-radius:12px;background:${bg};border:1px solid var(--line);width:fit-content;max-width:86%;">\n          <div style="font-size:0.74rem;font-weight:700;color:${color};line-height:1.15;">${label}</div>\n          <div style="white-space:pre-wrap;line-height:1.35;">${escapeHtml(item.text)}</div>\n        </div>`;
         return `<div style="justify-self:${align};display:inline-flex;flex-direction:column;gap:2px;padding:4px 7px;border-radius:12px;background:${bg};border:1px solid var(--line);width:fit-content;max-width:86%;">\n          <div style="font-size:0.74rem;font-weight:700;color:${color};line-height:1.15;">${label}</div>\n          <div style="white-space:pre-wrap;line-height:1.35;">${escapeHtml(item.text)}</div>\n        </div>`;
       }).join('');
       box.scrollTop = Math.min(prevTop, Math.max(0, box.scrollHeight - box.clientHeight));
@@ -1191,11 +1198,27 @@
       appendConversationLog('user', question || fullQuestion);
       await unlockAudioPlayback();
       setMascotState('thinking', uiText.bubbles.thinking);
-      await withEngine(async (eng, doc) => {
+      const askedViaEngine = await withEngine(async (eng, doc) => {
         const input = doc.getElementById('txtGemini');
         if (input) input.value = fullQuestion;
-        if (typeof eng.askGeminiFromInput === 'function') await eng.askGeminiFromInput();
+        if (typeof eng.askGeminiFromInput === 'function') {
+          await eng.askGeminiFromInput();
+          return true;
+        }
+        return false;
       });
+      if (!askedViaEngine) {
+        const res = await fetch('/api/gemini/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question: fullQuestion, mode: 'manual', reason: 'front_fallback', concise: false })
+        });
+        const data = await res.json().catch(() => ({}));
+        const fallbackReply = stripSpeechDecorations(data?.answer || data?.text || data?.error || '目前暫時無法回覆，請稍後再試。');
+        state.lastAnswerText = fallbackReply;
+        $('text-ask-answer').textContent = fallbackReply;
+        appendConversationLog('assistant', fallbackReply);
+      }
       await syncAsk();
       appendConversationLog('assistant', state.lastAnswerText || $('text-ask-answer').textContent || '');
       setMascotState('speaking', '我找到答案了！');
@@ -1362,9 +1385,26 @@
       $('btn-emotion-read-reason').onclick = () => speakText($('text-emotion-result').textContent);
     }
 
-    function onEngineLoaded() {
+    async function onEngineLoaded() {
       const eng = getEngine();
       if (!eng || !engineDoc) return;
+      let ready = hasRequiredEngineApis(eng);
+      if (!ready) {
+        for (let i = 0; i < 15; i += 1) {
+          await new Promise(r => setTimeout(r, 350));
+          ready = hasRequiredEngineApis(getEngine());
+          if (ready) break;
+        }
+      }
+      if (!ready) {
+        state.engineReady = false;
+        $('text-ask-voice-status').textContent = '功能引擎載入失敗，正在重試…';
+        if (!state.engineReloadTried) {
+          state.engineReloadTried = true;
+          engineFrame.src = `multimodal.html?retry=${Date.now()}`;
+        }
+        return;
+      }
       state.engineReady = true;
       const video = $('video-mascot');
       $('img-mascot-poster').classList.add('hidden');
@@ -1375,7 +1415,7 @@
       setMode('ask');
       clearVisibleFields();
       playMascotClip('wave', { restoreToIdle: true });
-      setInterval(() => { updateAll(); }, 800);
+      if (!window.__frontUpdateTimer) window.__frontUpdateTimer = setInterval(() => { updateAll(); }, 800);
     }
 
 
