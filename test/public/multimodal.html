@@ -2510,6 +2510,7 @@ pingGeminiHealth();
   let frontConversationLog = [];
   let qaSilenceTimer = null;
   let qaBufferedFinalText = '';
+  let qaLatestPreviewText = '';
   let qaAutoRunning = false;
   let qaProcessing = false;
 
@@ -2722,9 +2723,10 @@ pingGeminiHealth();
   }
 
   async function flushQaBufferedSpeech(){
-    const text = String(qaBufferedFinalText || '').trim();
+    const text = String(qaBufferedFinalText || qaLatestPreviewText || '').trim();
     clearQaSilenceTimer();
     qaBufferedFinalText = '';
+    qaLatestPreviewText = '';
     if(!text || qaProcessing) return;
     qaProcessing = true;
     try{
@@ -2755,6 +2757,7 @@ pingGeminiHealth();
     qaAutoRunning = false;
     clearQaSilenceTimer();
     qaBufferedFinalText = '';
+    qaLatestPreviewText = '';
     if(stt && qaRecRunning){ try{ stt.stop(); }catch(_){} }
     qaRecRunning = false;
     sttRunning = false;
@@ -2868,6 +2871,7 @@ pingGeminiHealth();
       }
       if(fin.trim()) qaBufferedFinalText = `${qaBufferedFinalText} ${fin}`.trim();
       const previewText = `${qaBufferedFinalText} ${interim}`.trim();
+      qaLatestPreviewText = previewText;
       $('sttInterim').textContent = previewText;
       if(previewText){
         $('sttStatus').textContent = '收音中…停止說話 2 秒後會自動回覆';
@@ -2886,6 +2890,7 @@ pingGeminiHealth();
     qaAutoRunning = true;
     clearQaSilenceTimer();
     qaBufferedFinalText = '';
+    qaLatestPreviewText = '';
     if(!stt) stt = initStt();
     if(!stt) return;
     try{ stt.lang = $('sttLang')?.value || 'zh-TW'; stt.start(); }catch(_){ }

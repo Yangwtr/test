@@ -318,7 +318,7 @@
           </div>
           <div id="panel-mascot-log" class="card result-box" style="margin-top:12px;">
             <div style="font-weight:700;margin-bottom:8px;">對話紀錄</div>
-            <div id="text-mascot-log" style="display:grid;gap:8px;max-height:220px;overflow:auto;">
+            <div id="text-mascot-log" style="display:grid;gap:8px;max-height:220px;overflow-y:auto;overflow-x:hidden;">
               <div class="helper-text">你說的話和公仔的回應，會記錄在這裡。</div>
             </div>
           </div>
@@ -687,9 +687,10 @@
         const label = item.role === 'user' ? '你' : '公仔';
         const bg = item.role === 'user' ? 'var(--primary-weak)' : 'var(--soft-yellow)';
         const color = item.role === 'user' ? 'var(--primary)' : 'var(--text)';
-        return `<div style="padding:10px 12px;border-radius:14px;background:${bg};border:1px solid var(--line);">
-          <div style="font-size:0.82rem;font-weight:700;color:${color};margin-bottom:4px;">${label}</div>
-          <div style="white-space:pre-wrap;line-height:1.7;">${escapeHtml(item.text)}</div>
+        const align = item.role === 'user' ? 'end' : 'start';
+        return `<div style="justify-self:${align};padding:8px 10px;border-radius:14px;background:${bg};border:1px solid var(--line);width:fit-content;max-width:86%;">
+          <div style="font-size:0.78rem;font-weight:700;color:${color};margin-bottom:3px;">${label}</div>
+          <div style="white-space:pre-wrap;line-height:1.6;">${escapeHtml(item.text)}</div>
         </div>`;
       }).join('');
     }
