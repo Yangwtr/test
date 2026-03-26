@@ -307,6 +307,36 @@ async function generateTtsPayload(text, { voiceName, stylePrompt } = {}) {
   try { return await work; } finally { inflightTtsRequests.delete(cacheKey); }
 }
 
+
+async function generateLiveAudioPayload(text, { voiceName, stylePrompt } = {}) {
+  const cleanText = normaliseTtsText(text);
+  const finalVoice = voiceName || TTS_VOICE;
+  if (!cleanText) return makeEmptyTtsPayload({ voiceName: finalVoice });
+  const livePrompt = [
+    stylePrompt || TTS_STYLE,
+    '請用自然、溫柔、像老師陪讀的語氣朗讀以下內容：',
+    cleanText,
+  ].join('\n\n');
+  const responseJson = await callGeminiGenerateContent(LIVE_MODEL, {
+    contents: [{ parts: [{ text: livePrompt }] }],
+    generationConfig: {
+      responseModalities: ['AUDIO'],
+      temperature: 0.6,
+      speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: finalVoice } } },
+    },
+  });
+  const inlineAudio = extractInlineAudioPart(responseJson);
+  if (!inlineAudio?.data) return makeEmptyTtsPayload({ voiceName: finalVoice });
+  return {
+    audioBase64: inlineAudio.data,
+    mimeType: inlineAudio.mimeType || inlineAudio.mime_type || 'audio/wav',
+    voiceName: finalVoice,
+    ttsModel: LIVE_MODEL,
+    cached: false,
+    ttsFallback: false,
+  };
+}
+
 app.post('/api/gemini/chat', async (req, res) => {
   try {
     const {
@@ -378,7 +408,18 @@ app.post('/api/gemini/chat-tts', async (req, res) => {
 
     const data = await generateChatResponse({ question, mode, reason, source, workbookLoaded, poemsLoaded, currentIntent, alternateIntent, predictions, currentPoem }, { concise: !!concise, voiceChat: !!voiceChat, useLive: !!useLive });
     try {
-      const ttsPayload = await generateTtsPayload(data.answer, { voiceName, stylePrompt });
+      let ttsPayload = null;
+      if (useLive) {
+        try {
+          ttsPayload = await generateLiveAudioPayload(data.answer, { voiceName, stylePrompt });
+        } catch (liveErr) {
+          console.error(liveErr);
+          ttsPayload = null;
+        }
+      }
+      if (!ttsPayload?.audioBase64) {
+        ttsPayload = await generateTtsPayload(data.answer, { voiceName, stylePrompt });
+      }
       res.json({ ...data, ...ttsPayload, ttsFallback: !!ttsPayload.ttsFallback, quotaExceeded: !!ttsPayload.quotaExceeded, ttsError: ttsPayload.error || '' });
     } catch (ttsError) {
       console.error(ttsError);
