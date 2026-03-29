@@ -2512,6 +2512,7 @@ pingGeminiHealth();
   let voiceChatBusy = false;
   let voiceChatAwaiting = false;
   let voiceChatListening = false;
+  const VOICE_RESUME_DELAY_MS = 1200;
   let ttsSpeaking = false;
   let faceStableSinceMs = null;
   let frontConversationLog = [];
@@ -2571,7 +2572,7 @@ pingGeminiHealth();
     const speakText = shortSpeakText(rawText);
     if(!speakText) {
       if(voiceChatActive && !voiceChatAwaiting){
-        setTimeout(() => { try { voiceChatRec && voiceChatRec.start(); } catch(_){} }, 250);
+        setTimeout(() => { try { voiceChatRec && voiceChatRec.start(); } catch(_){} }, VOICE_RESUME_DELAY_MS);
       }
       return false;
     }
@@ -2590,8 +2591,8 @@ pingGeminiHealth();
       }
       if(played){
         if(voiceChatActive && !voiceChatAwaiting){
-          setVoiceChatStatus('等待下一句語音…', 'var(--gold-light)');
-          setTimeout(() => { try { voiceChatRec && voiceChatRec.start(); } catch(_){} }, 220);
+          setVoiceChatStatus('回覆完成，準備重新收音…', 'var(--gold-light)');
+          setTimeout(() => { try { voiceChatRec && voiceChatRec.start(); } catch(_){} }, VOICE_RESUME_DELAY_MS);
         }
         return true;
       }
@@ -2613,15 +2614,15 @@ pingGeminiHealth();
       ttsSpeaking = false;
       updateVoiceButtons();
       if(voiceChatActive && !voiceChatAwaiting){
-        setVoiceChatStatus('等待下一句語音…', 'var(--gold-light)');
-        setTimeout(() => { try { voiceChatRec && voiceChatRec.start(); } catch(_){} }, 250);
+        setVoiceChatStatus('回覆完成，準備重新收音…', 'var(--gold-light)');
+        setTimeout(() => { try { voiceChatRec && voiceChatRec.start(); } catch(_){} }, VOICE_RESUME_DELAY_MS);
       }
     };
     utter.onerror = () => {
       ttsSpeaking = false;
       updateVoiceButtons();
       if(voiceChatActive && !voiceChatAwaiting){
-        setTimeout(() => { try { voiceChatRec && voiceChatRec.start(); } catch(_){} }, 250);
+        setTimeout(() => { try { voiceChatRec && voiceChatRec.start(); } catch(_){} }, VOICE_RESUME_DELAY_MS);
       }
     };
     ttsSpeaking = true;
@@ -2659,7 +2660,8 @@ pingGeminiHealth();
         alternateIntent: lastIntentResult?.second || null,
         source: $('resultSource')?.textContent || '',
         workbookLoaded: qaWorkbookConfig?.loaded,
-        poemsLoaded
+        poemsLoaded,
+        useLive: true
       })
     });
     const data = await res.json().catch(() => ({}));
@@ -2801,7 +2803,7 @@ pingGeminiHealth();
     }finally{
       qaProcessing = false;
       qaAutoResponding = false;
-      if(qaAutoRunning) scheduleQaRestart(180, 4);
+      if(qaAutoRunning) scheduleQaRestart(VOICE_RESUME_DELAY_MS, 4);
       updateVoiceButtons();
     }
   }
