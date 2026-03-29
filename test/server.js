@@ -358,6 +358,7 @@ async function generateLiveAudioPayload(text, { voiceName, stylePrompt } = {}) {
   let session = null;
   try {
     session = await ai.live.connect(liveConfig);
+    console.log(`✅ 成功建立 Gemini Live WebSocket 連線！(模型: ${LIVE_MODEL})`);
     if (typeof session?.on !== 'function' || typeof session?.send !== 'function') {
       throw new Error('session.on/session.send 不可用，改用 callbacks 相容模式');
     }
