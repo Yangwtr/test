@@ -312,24 +312,66 @@ async function generateLiveAudioPayload(text, { voiceName, stylePrompt } = {}) {
   const cleanText = normaliseTtsText(text);
   const finalVoice = voiceName || TTS_VOICE;
   if (!cleanText) return makeEmptyTtsPayload({ voiceName: finalVoice });
-  const livePrompt = [
+
+  const promptText = [
     stylePrompt || TTS_STYLE,
     '請用自然、溫柔、像老師陪讀的語氣朗讀以下內容：',
     cleanText,
   ].join('\n\n');
-  const responseJson = await callGeminiGenerateContent(LIVE_MODEL, {
-    contents: [{ parts: [{ text: livePrompt }] }],
-    generationConfig: {
+
+  // Prefer Gemini Live via SDK websocket live.connect().
+  // Supports @google/genai first, and falls back to REST path handled by caller.
+  const mod = await import('@google/genai');
+  const GoogleGenAI = mod?.GoogleGenAI;
+  if (!GoogleGenAI) throw new Error('未找到 @google/genai 的 GoogleGenAI');
+
+  const ai = new GoogleGenAI({ apiKey: API_KEY });
+  const chunks = [];
+
+  let settle;
+  const done = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Gemini Live 音訊等待逾時')), 15000);
+    settle = {
+      resolve: () => { clearTimeout(timer); resolve(); },
+      reject: (err) => { clearTimeout(timer); reject(err); },
+    };
+  });
+
+  const session = await ai.live.connect({
+    model: LIVE_MODEL,
+    config: {
       responseModalities: ['AUDIO'],
-      temperature: 0.6,
       speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: finalVoice } } },
     },
+    callbacks: {
+      onmessage: (msg) => {
+        const parts = msg?.serverContent?.modelTurn?.parts || msg?.modelTurn?.parts || [];
+        for (const part of parts) {
+          const inline = part?.inlineData || part?.inline_data || null;
+          if (inline?.data) {
+            chunks.push({ data: inline.data, mimeType: inline.mimeType || inline.mime_type || 'audio/wav' });
+          }
+        }
+        if (msg?.serverContent?.turnComplete || msg?.turnComplete) settle.resolve();
+      },
+      onerror: (err) => settle.reject(err instanceof Error ? err : new Error(String(err || 'Gemini Live 連線錯誤'))),
+      onclose: () => { if (!chunks.length) settle.resolve(); },
+    },
   });
-  const inlineAudio = extractInlineAudioPart(responseJson);
-  if (!inlineAudio?.data) return makeEmptyTtsPayload({ voiceName: finalVoice });
+
+  await session.sendClientContent({
+    turns: [{ role: 'user', parts: [{ text: promptText }] }],
+    turnComplete: true,
+  });
+
+  await done;
+  try { session.close(); } catch (_) {}
+
+  const first = chunks[0];
+  if (!first?.data) return makeEmptyTtsPayload({ voiceName: finalVoice });
   return {
-    audioBase64: inlineAudio.data,
-    mimeType: inlineAudio.mimeType || inlineAudio.mime_type || 'audio/wav',
+    audioBase64: first.data,
+    mimeType: first.mimeType || 'audio/wav',
     voiceName: finalVoice,
     ttsModel: LIVE_MODEL,
     cached: false,

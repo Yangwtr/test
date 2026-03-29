@@ -3022,17 +3022,13 @@ pingGeminiHealth();
         setReply('Gemini 回答中…');
         setVoiceChatStatus('Gemini 回答中…', 'var(--gold-light)');
         try{
-          const autoSpeak = !!($('chkSpeakReply')?.checked);
-          const data = await requestGemini(question, {mode:'voice_chat', reason:'voice_chat_turn', concise:true, voiceChat:true, withAudio:autoSpeak, voiceName:'Leda'});
+          const autoSpeak = true;
+          const data = await requestGemini(question, {mode:'voice_chat', reason:'voice_chat_turn', concise:true, voiceChat:true, withAudio:true, voiceName:'Leda'});
           const replyText = formatGeminiReply(`【語音提問】${question}`, data);
           setReply(replyText);
           pushFrontConversationLog('assistant', replyText);
           voiceChatAwaiting = false;
-          if(autoSpeak) await speakGeminiAnswer(data);
-          else if(voiceChatActive){
-            setVoiceChatStatus('等待下一句語音…', 'var(--gold-light)');
-            setTimeout(() => { try { rec.start(); } catch(_){} }, 250);
-          }
+          await speakGeminiAnswer(data);
         }catch(err){
           voiceChatAwaiting = false;
           const rawMsg = String(err?.message || err || '');
