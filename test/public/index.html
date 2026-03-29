@@ -138,7 +138,11 @@
       padding: 14px 16px;
       line-height: 1.65;
       font-weight: 600;
-      min-height: 92px;
+      min-height: 0;
+      width: fit-content;
+      max-width: 100%;
+      max-height: 180px;
+      overflow: auto;
     }
     #status-mascot-state {
       display: inline-flex;
@@ -314,7 +318,7 @@
           </div>
           <div id="panel-mascot-log" class="card result-box" style="margin-top:12px;">
             <div style="font-weight:700;margin-bottom:8px;">對話紀錄</div>
-            <div id="text-mascot-log" style="display:grid;gap:8px;max-height:220px;overflow:auto;">
+            <div id="text-mascot-log" style="display:grid;gap:6px;grid-auto-rows:max-content;align-content:start;max-height:220px;overflow-y:auto;overflow-x:hidden;">
               <div class="helper-text">你說的話和公仔的回應，會記錄在這裡。</div>
             </div>
           </div>
@@ -330,16 +334,15 @@
 
             <section id="panel-mode-ask" class="mode-panel">
               <div class="card">
-                <h3 class="card-title">問問公仔</h3>
-                <p class="helper-text">你可以打字問我；按「語音輸入」會先把你的話轉成文字；按「直接跟公仔說」則會在你講完後自動回答並說出來。</p>
+                <h3 class="card-title">問問三光寶貝</h3>
+                <p class="helper-text">你可以打字問我；按「與三光寶貝對話」後直接說話，系統會在 2 秒無人聲後自動回答並唸出回覆。</p>
                 <div class="input-shell" style="margin-top:10px;">
                   <textarea id="input-ask-question" placeholder="請輸入你想問的問題……"></textarea>
                   <button id="btn-ask-submit" class="control-btn primary-btn">送出問題</button>
                 </div>
                 <div class="inline-actions" style="margin-top:10px;">
-                  <button id="btn-ask-voice-start" class="control-btn primary-btn">語音輸入（轉文字）</button>
+                  <button id="btn-ask-voice-start" class="control-btn primary-btn">與三光寶貝對話</button>
                   <button id="btn-ask-voice-stop" class="control-btn danger-btn">停止收音</button>
-                  <button id="btn-ask-voice-chat" class="control-btn">直接跟公仔說</button>
                   <button id="btn-ask-read-aloud" class="control-btn">重播公仔回答</button>
                   <button id="btn-ask-reset" class="control-btn">清空對話</button>
                   <button id="btn-ask-more" class="control-btn">回答更詳細</button>
@@ -384,8 +387,9 @@
               <div id="quiz-options-front" class="mode-options-grid"></div>
               <div id="text-quiz-result" class="card result-box">作答後，這裡會顯示是否答對、原因與修正提醒。</div>
               <div id="card-quiz-related-poem" class="card">
-                <h3 class="card-title">這一題對應的詩詞</h3>
-                <div class="poem-meta-grid">
+                <h3 class="card-title">提示</h3>
+                <div id="text-quiz-hint" class="helper-text">每題產生後，這裡會提供一段不暴雷提示。</div>
+                <div class="poem-meta-grid" style="display:none;">
                   <div class="label">詩名：</div><div id="text-quiz-poem-title">—</div>
                   <div class="label">包含物：</div><div id="text-quiz-poem-objects">—</div>
                   <div class="label">情緒：</div><div id="text-quiz-poem-emotion">—</div>
@@ -504,7 +508,7 @@
     </div>
   </div>
 
-  <iframe id="engineFrame" src="multimodal.html" title="多模態詩詞功能引擎"></iframe>
+  <iframe id="engineFrame" src="multimodal.html" title="多模態詩詞功能引擎" allow="microphone; camera; autoplay"></iframe>
   <audio id="audio-native-tts" preload="auto" playsinline></audio>
 
   <script>
@@ -554,7 +558,12 @@
       audioUnlocked: false,
       ttsCache: new Map(),
       ttsQuotaExceeded: false,
-      ttsDisabledReason: ''
+      ttsDisabledReason: '',
+      lastSpokenReplyKey: '',
+      conversationRenderToken: '',
+      engineReloadTried: false,
+      quizHintCache: new Map(),
+      quizHintPendingKey: ''
     };
 
     const $ = id => document.getElementById(id);
@@ -568,6 +577,7 @@
     const engineFrame = $('engineFrame');
     let engineWin = null;
     let engineDoc = null;
+    let eventsBound = false;
 
     function escapeHtml(str='') {
       return str.replace(/[&<>"]/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[s]));
@@ -578,6 +588,13 @@
       engineWin = engineFrame.contentWindow;
       try { engineDoc = engineWin.document; } catch (_) { engineDoc = null; }
       return engineWin;
+    }
+
+
+
+    function hasRequiredEngineApis(eng) {
+      const required = ['getFrontBridgeState', 'askGeminiFromInput', 'startFace', 'startVoiceAnalysis', 'startQaStt'];
+      return required.every(name => typeof eng?.[name] === 'function');
     }
 
     async function withEngine(cb, { rethrow = false } = {}) {
@@ -661,8 +678,7 @@
       const clean = stripSpeechDecorations(text || '').trim();
       if (!clean) return;
       const key = `${role}::${clean}`;
-      const last = state.conversationLog[state.conversationLog.length - 1];
-      if (last && last.key === key) return;
+      if (state.conversationLog.some(item => item.key === key)) return;
       state.conversationLog.push({ role, text: clean, key });
       if (state.conversationLog.length > 18) state.conversationLog = state.conversationLog.slice(-18);
       renderConversationLog();
@@ -675,20 +691,23 @@
     function renderConversationLog() {
       const box = $('text-mascot-log');
       if (!box) return;
+      const renderToken = state.conversationLog.map(item => item.key).join('|');
+      if (renderToken === state.conversationRenderToken) return;
+      const prevTop = box.scrollTop;
       if (!state.conversationLog.length) {
         box.innerHTML = '<div class="helper-text">你說的話和公仔的回應，會記錄在這裡。</div>';
+        state.conversationRenderToken = '';
         return;
       }
       box.innerHTML = state.conversationLog.map(item => {
-        const label = item.role === 'user' ? '你' : '公仔';
+        const label = item.role === 'user' ? '你' : '三光寶貝';
         const bg = item.role === 'user' ? 'var(--primary-weak)' : 'var(--soft-yellow)';
         const color = item.role === 'user' ? 'var(--primary)' : 'var(--text)';
-        return `<div style="padding:10px 12px;border-radius:14px;background:${bg};border:1px solid var(--line);">
-          <div style="font-size:0.82rem;font-weight:700;color:${color};margin-bottom:4px;">${label}</div>
-          <div style="white-space:pre-wrap;line-height:1.7;">${escapeHtml(item.text)}</div>
-        </div>`;
+        const align = item.role === 'user' ? 'end' : 'start';
+        return `<div style="justify-self:${align};display:inline-flex;flex-direction:column;gap:2px;padding:4px 7px;border-radius:12px;background:${bg};border:1px solid var(--line);width:fit-content;max-width:86%;">\n          <div style="font-size:0.74rem;font-weight:700;color:${color};line-height:1.15;">${label}</div>\n          <div style="white-space:pre-wrap;line-height:1.35;">${escapeHtml(item.text)}</div>\n        </div>`;
       }).join('');
-      box.scrollTop = box.scrollHeight;
+      box.scrollTop = Math.min(prevTop, Math.max(0, box.scrollHeight - box.clientHeight));
+      state.conversationRenderToken = renderToken;
     }
 
     function uniquePoems(list=[]) {
@@ -975,13 +994,6 @@
           await playAudioBase64(payload.audioBase64, payload.mimeType || 'audio/wav');
           return true;
         }
-        if (!payload?.ttsFallback) {
-          const tts = await requestGeminiNativeTts(text, options);
-          if (tts?.audioBase64) {
-            await playAudioBase64(tts.audioBase64, tts.mimeType || 'audio/wav');
-            return true;
-          }
-        }
       } catch (err) {
         console.warn('Gemini Native Speech failed, fallback to browser TTS.', err);
       }
@@ -1021,23 +1033,31 @@
       $('text-emotion-result').textContent = '我感受到你的心情是……';
       $('text-quiz-result').textContent = '作答後，這裡會顯示是否答對、原因與修正提醒。';
       $('text-quiz-question').textContent = '載入詩詞資料後，按「開始闖關」就能由 AI 主動出題。';
+      $('text-quiz-hint').textContent = '每題產生後，這裡會提供一段不暴雷提示。';
       $('quiz-options-front').innerHTML = '';
       ['ask','quiz','image','emotion'].forEach(prefix => renderPoemMeta(prefix, null));
       state.activePoem = null;
       state.readingPoemOptions = [];
+      state.quizHintCache.clear();
       state.readingSelectedKey = '';
       $('select-reading-poem').innerHTML = '<option value=>目前尚未有推薦詩詞</option>';
       $('select-reading-poem').disabled = true;
       $('text-reading-poem-source').textContent = '目前尚未收到推薦詩詞。';
       $('text-reading-poem-full').innerHTML = '請先在看圖猜詩或心情配詩取得推薦詩詞。';
       state.conversationLog = [];
+      state.lastSpokenReplyKey = '';
+      state.conversationRenderToken = '';
       renderConversationLog();
     }
 
     async function syncAsk() {
       const bridge = await getBridgeState();
       if (!bridge) return;
-      const reply = bridge.qaReply || '你的問題送出後，我會在這裡回答你。';
+      const defaultReply = '你的問題送出後，我會在這裡回答你。';
+      const placeholderReplies = new Set([defaultReply, '（尚未開始）', '(尚未開始)', '尚未開始']);
+      const rawReply = bridge.qaReply || defaultReply;
+      const normalizedReply = stripSpeechDecorations(rawReply);
+      const reply = placeholderReplies.has(normalizedReply) ? defaultReply : rawReply;
       state.lastAnswerText = reply;
       $('text-ask-answer').textContent = reply;
       $('text-ask-voice-status').textContent = bridge.voiceChatStatus || bridge.sttStatus || '語音問答待命';
@@ -1047,10 +1067,51 @@
         key: `${item.role === 'user' ? 'user' : 'assistant'}::${stripSpeechDecorations(item.text || '')}`
       })).filter(item => item.text) : [];
       if (bridgeLog.length) mergeConversationLog(bridgeLog);
-      else if (reply && reply !== '你的問題送出後，我會在這裡回答你。') appendConversationLog('assistant', reply);
+      else if (reply && reply !== defaultReply) appendConversationLog('assistant', reply);
+      const latestUserText = [...bridgeLog].reverse().find(item => item.role === 'user')?.text || '';
+      const bridgeUserText = stripSpeechDecorations(bridge.lastQaUserText || latestUserText || '').trim();
+      if (bridgeUserText) appendConversationLog('user', bridgeUserText);
+      const isListening = !!(bridge.voiceChatActive || bridge.qaRecRunning || bridge.voiceChatListening || bridge.sttRunning);
+      const draftText = stripSpeechDecorations(bridge.sttInterimText || bridge.qaInputText || '').trim();
+      if (isListening && draftText) {
+        $('input-ask-question').value = draftText;
+        setMascotState('listening', `我聽到你說：${draftText}`);
+      }
+      const replyKey = stripSpeechDecorations(reply || '').trim();
+      if (replyKey && replyKey !== defaultReply && !bridge.voiceChatActive && !bridge.qaAutoResponding && state.lastSpokenReplyKey !== replyKey) {
+        state.lastSpokenReplyKey = replyKey;
+        await playGeminiNativeSpeech(replyKey, { bubbleText: '我來回答你。' });
+      }
       renderConversationLog();
       if (bridge.currentPoem) applyActivePoem(bridge.currentPoem, 'ask');
       else $('text-ask-poem-title').textContent = bridge.currentPoemText === '未選取' ? '—' : bridge.currentPoemText;
+    }
+
+
+    function buildLocalQuizHint(question='', options=[]) {
+      const q = stripSpeechDecorations(question || '').toLowerCase();
+      const optText = (options || []).map(o => stripSpeechDecorations(o?.text || '')).join(' ');
+      if (/下一句|接龍|下半句/.test(q)) return '先找語意最連貫、節奏最順的句子。';
+      if (/錯|抓漏|改字|哪個字/.test(q)) return '先比對平常最熟的原句，再找突兀字。';
+      if (/心情|情緒|安慰/.test(q)) return '先抓題目情緒，再選意境最接近的一首。';
+      if (/白話|反推|猜哪首/.test(q)) return '把白話中的景物與情緒當關鍵字去對照。';
+      if (/畫面|物品|意象|點餐/.test(q) || /月|山|花|風|雨|夜/.test(optText)) return '先找最明顯意象，再對應常見詩詞場景。';
+      return '先圈出關鍵字，再排除最不符合題意的選項。';
+    }
+
+    async function ensureQuizHint(question='', options=[]) {
+      const q = stripSpeechDecorations(question || '').trim();
+      if (!q || q.includes('載入詩詞資料後')) {
+        $('text-quiz-hint').textContent = '每題產生後，這裡會提供一段不暴雷提示。';
+        return;
+      }
+      if (state.quizHintCache.has(q)) {
+        $('text-quiz-hint').textContent = state.quizHintCache.get(q);
+        return;
+      }
+      const hint = buildLocalQuizHint(q, options || []);
+      state.quizHintCache.set(q, hint);
+      $('text-quiz-hint').textContent = hint;
     }
 
     async function syncQuiz() {
@@ -1074,6 +1135,7 @@
         out.appendChild(vBtn);
       });
       if (bridge.currentPoem) applyActivePoem(bridge.currentPoem, 'quiz');
+      await ensureQuizHint(bridge.quizQuestion || '', bridge.quizOptions || []);
     }
 
     async function syncImage() {
@@ -1107,7 +1169,14 @@
     async function syncEmotion() {
       const bridge = await getBridgeState();
       if (!bridge) return;
-      $('text-emotion-result').textContent = bridge.emotionText || '我感受到你的心情是……';
+      const baseEmotion = bridge.emotionText || '我感受到你的心情是……';
+      const emotionPoems = Array.isArray(bridge.emotionMatchedPoems) ? bridge.emotionMatchedPoems : [];
+      if (emotionPoems.length) {
+        const topNames = emotionPoems.slice(0, 5).map((p, idx) => `${idx + 1}. ${p.name || '未命名詩'}`);
+        $('text-emotion-result').textContent = `${baseEmotion}\n\n我另外推薦這些同情緒詩詞：\n${topNames.join('\n')}`;
+      } else {
+        $('text-emotion-result').textContent = baseEmotion;
+      }
       const box = $('media-emotion-preview');
       if (bridge.faceSnapshotDataUrl) {
         box.innerHTML = `<div><img src="${bridge.faceSnapshotDataUrl}" alt="表情截圖"><div class="helper-text" style="margin-top:8px;">已保留 1 秒辨識完成時的表情截圖，方便和偵測結果比對。</div></div>`;
@@ -1162,14 +1231,31 @@
       appendConversationLog('user', question || fullQuestion);
       await unlockAudioPlayback();
       setMascotState('thinking', uiText.bubbles.thinking);
-      await withEngine(async (eng, doc) => {
+      const askedViaEngine = await withEngine(async (eng, doc) => {
         const input = doc.getElementById('txtGemini');
         if (input) input.value = fullQuestion;
-        if (typeof eng.askGeminiFromInput === 'function') await eng.askGeminiFromInput();
+        if (typeof eng.askGeminiFromInput === 'function') {
+          await eng.askGeminiFromInput();
+          return true;
+        }
+        return false;
       });
+      if (!askedViaEngine) {
+        const res = await fetch('/api/gemini/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question: fullQuestion, mode: 'manual', reason: 'front_fallback', concise: false })
+        });
+        const data = await res.json().catch(() => ({}));
+        const fallbackReply = stripSpeechDecorations(data?.answer || data?.text || data?.error || '目前暫時無法回覆，請稍後再試。');
+        state.lastAnswerText = fallbackReply;
+        $('text-ask-answer').textContent = fallbackReply;
+        appendConversationLog('assistant', fallbackReply);
+      }
       await syncAsk();
       appendConversationLog('assistant', state.lastAnswerText || $('text-ask-answer').textContent || '');
       setMascotState('speaking', '我找到答案了！');
+      state.lastSpokenReplyKey = stripSpeechDecorations(state.lastAnswerText || $('text-ask-answer').textContent || '').trim();
       await playGeminiNativeSpeech(state.lastAnswerText || $('text-ask-answer').textContent || '', { bubbleText: '我來回答你。' });
     }
 
@@ -1191,6 +1277,8 @@
     }
 
     function initEvents() {
+      if (eventsBound) return;
+      eventsBound = true;
       $('btn-teacher-mode').onclick = openTeacherPage;
       $('select-reading-poem').onchange = async () => { const bridge = await getBridgeState(); renderSelectedReadingPoem(bridge, $('select-reading-poem').value); };
       $('btn-action-open-multimodal').onclick = openTeacherPage;
@@ -1224,6 +1312,8 @@
         $('text-ask-answer').textContent = '你的問題送出後，我會在這裡回答你。';
         renderPoemMeta('ask', null);
         state.conversationLog = [];
+        state.lastSpokenReplyKey = '';
+        state.conversationRenderToken = '';
         renderConversationLog();
         withEngine((eng) => {
           eng.clearAskSession && eng.clearAskSession();
@@ -1236,13 +1326,6 @@
       });
       $('btn-ask-voice-start').onclick = async () => { await unlockAudioPlayback(); return withEngine((eng) => { eng.startQaStt && eng.startQaStt(); setMode('ask'); }); };
       $('btn-ask-voice-stop').onclick = () => withEngine((eng) => eng.stopQaStt && eng.stopQaStt());
-      $('btn-ask-voice-chat').onclick = async () => {
-        await unlockAudioPlayback();
-        stopGeminiNativeSpeech();
-        const bridge = await getBridgeState();
-        if (bridge?.voiceChatActive) await withEngine((eng) => eng.stopVoiceChat && eng.stopVoiceChat(true));
-        else await withEngine((eng) => eng.startVoiceChat && eng.startVoiceChat());
-      };
 
       $('select-quiz-mode').onchange = () => withEngine((eng, doc) => {
         const sel = doc.getElementById('quizMode');
@@ -1311,7 +1394,17 @@
         withEngine((eng) => eng.clearImageSession && eng.clearImageSession());
       };
       $('btn-image-again').onclick = () => $('btn-image-start').click();
-      $('btn-image-read-result').onclick = () => speakText($('text-image-result').textContent);
+      $('btn-image-read-result').onclick = async () => {
+        const bridge = await getBridgeState();
+        const bestLabel = stripSpeechDecorations(bridge?.imageTopLabel || '');
+        const bestPct = Number(bridge?.imageTopConfidence || 0);
+        const firstPoem = (Array.isArray(bridge?.imageMatchedPoems) ? bridge.imageMatchedPoems : [])[0];
+        const parts = [];
+        if (bestLabel) parts.push(`最高辨識是 ${bestLabel}，大約 ${(bestPct * 100).toFixed(1)}%。`);
+        if (firstPoem?.name) parts.push(`我先推薦第一首《${firstPoem.name}》。`);
+        if (!parts.length) parts.push('目前還沒有可朗讀的辨識結果。');
+        speakText(parts.join(''));
+      };
 
       $('btn-reading-start').onclick = () => withEngine((eng) => { eng.startVoiceAnalysis && eng.startVoiceAnalysis(); setMascotState('listening', '請開始朗讀，我正在聽。'); });
       $('btn-reading-stop').onclick = async () => { await withEngine((eng) => eng.stopVoiceAnalysis && eng.stopVoiceAnalysis('manual')); await syncReading(); };
@@ -1332,12 +1425,35 @@
         else speakText('沒關係，我陪你慢慢來。');
         setMascotState('comforting', uiText.bubbles.comforting);
       };
-      $('btn-emotion-read-reason').onclick = () => speakText($('text-emotion-result').textContent);
+      $('btn-emotion-read-reason').onclick = async () => {
+        const bridge = await getBridgeState();
+        const firstPoem = (Array.isArray(bridge?.emotionMatchedPoems) ? bridge.emotionMatchedPoems : [])[0];
+        const baseEmotion = stripSpeechDecorations(bridge?.emotionText || '我感受到你的心情。');
+        const summary = firstPoem?.name ? `${baseEmotion}。我先推薦第一首《${firstPoem.name}》。` : baseEmotion;
+        speakText(summary);
+      };
     }
 
-    function onEngineLoaded() {
+    async function onEngineLoaded() {
       const eng = getEngine();
       if (!eng || !engineDoc) return;
+      let ready = hasRequiredEngineApis(eng);
+      if (!ready) {
+        for (let i = 0; i < 15; i += 1) {
+          await new Promise(r => setTimeout(r, 350));
+          ready = hasRequiredEngineApis(getEngine());
+          if (ready) break;
+        }
+      }
+      if (!ready) {
+        state.engineReady = false;
+        $('text-ask-voice-status').textContent = '功能引擎載入失敗，正在重試…';
+        if (!state.engineReloadTried) {
+          state.engineReloadTried = true;
+          engineFrame.src = `multimodal.html?retry=${Date.now()}`;
+        }
+        return;
+      }
       state.engineReady = true;
       const video = $('video-mascot');
       $('img-mascot-poster').classList.add('hidden');
@@ -1348,13 +1464,25 @@
       setMode('ask');
       clearVisibleFields();
       playMascotClip('wave', { restoreToIdle: true });
-      setInterval(() => { updateAll(); }, 800);
+      if (!window.__frontUpdateTimer) window.__frontUpdateTimer = setInterval(() => { updateAll(); }, 800);
     }
+
+
+    // Bind UI controls immediately so buttons are not dead while engine is loading.
+    initEvents();
+    renderConversationLog();
+    setMode('ask');
 
     engineFrame.addEventListener('load', () => {
       // Give the engine page a moment to register globals and auto-load bundled data.
       setTimeout(onEngineLoaded, 1200);
     });
+
+    setTimeout(() => {
+      if (!state.engineReady) {
+        $('text-ask-voice-status').textContent = '功能引擎啟動中，請稍候 1-2 秒再試。';
+      }
+    }, 2200);
   </script>
 </body>
 </html>
