@@ -2514,6 +2514,7 @@ pingGeminiHealth();
   let voiceChatListening = false;
   const VOICE_RESUME_DELAY_MS = 1200;
   let ttsSpeaking = false;
+  let lastEngineSpokenReplyKey = '';
   let faceStableSinceMs = null;
   let frontConversationLog = [];
   let qaSilenceTimer = null;
@@ -2553,29 +2554,20 @@ pingGeminiHealth();
     updateVoiceButtons();
   }
 
-  function shortSpeakText(text=''){
-    const clean = cleanGeminiText(text);
-    const pieces = clean.split(/(?<=[。！？!?])/).map(s => s.trim()).filter(Boolean);
-    let out = '';
-    for(const p of pieces){
-      if((out + p).length > 90) break;
-      out += p;
-      if((out.match(/[。！？!?]/g) || []).length >= 3) break;
-    }
-    return (out || clean).slice(0, 100).trim();
-  }
-
   async function speakGeminiAnswer(payloadOrText){
     const rawText = typeof payloadOrText === 'object'
       ? (payloadOrText?.answer || payloadOrText?.text || '')
       : String(payloadOrText || '');
-    const speakText = shortSpeakText(rawText);
+    const speakText = cleanGeminiText(rawText);
+    const speakKey = speakText.replace(/\s+/g, ' ').trim();
+    if(speakKey && speakKey === lastEngineSpokenReplyKey) return false;
     if(!speakText) {
       if(voiceChatActive && !voiceChatAwaiting){
         setTimeout(() => { try { voiceChatRec && voiceChatRec.start(); } catch(_){} }, VOICE_RESUME_DELAY_MS);
       }
       return false;
     }
+    lastEngineSpokenReplyKey = speakKey;
     stopSpeaking();
     setVoiceChatStatus('Gemini 朗讀中…', 'var(--gold-light)');
     updateVoiceButtons();
@@ -3025,7 +3017,7 @@ pingGeminiHealth();
         setVoiceChatStatus('Gemini 回答中…', 'var(--gold-light)');
         try{
           const autoSpeak = true;
-          const data = await requestGemini(question, {mode:'voice_chat', reason:'voice_chat_turn', concise:true, voiceChat:true, withAudio:true, voiceName:'Leda'});
+          const data = await requestGemini(question, {mode:'voice_chat', reason:'voice_chat_turn', concise:false, voiceChat:true, withAudio:true, voiceName:'Leda'});
           const replyText = formatGeminiReply(`【語音提問】${question}`, data);
           setReply(replyText);
           pushFrontConversationLog('assistant', replyText);
@@ -3534,6 +3526,8 @@ function readQuizQuestion(){
       voiceChatActive: !!voiceChatActive,
       voiceChatBusy: !!voiceChatBusy,
       voiceChatListening: !!voiceChatListening,
+      ttsSpeaking: !!ttsSpeaking,
+      lastSpokenReplyKey: lastEngineSpokenReplyKey || '',
       analysisRecRunning: !!analysisRecRunning,
       volActive: !!volActive,
       sttRunning: !!sttRunning,

@@ -1088,8 +1088,9 @@
         $('input-ask-question').value = draftText;
         setMascotState('listening', `我聽到你說：${draftText}`);
       }
+      if (bridge.lastSpokenReplyKey) state.lastSpokenReplyKey = stripSpeechDecorations(bridge.lastSpokenReplyKey);
       const replyKey = stripSpeechDecorations(reply || '').trim();
-      if (replyKey && replyKey !== defaultReply && !bridge.voiceChatActive && !bridge.qaAutoResponding && state.lastSpokenReplyKey !== replyKey) {
+      if (replyKey && replyKey !== defaultReply && !bridge.voiceChatActive && !bridge.qaAutoResponding && !bridge.ttsSpeaking && state.lastSpokenReplyKey !== replyKey) {
         state.lastSpokenReplyKey = replyKey;
         await playGeminiNativeSpeech(replyKey, { bubbleText: '我來回答你。' });
       }
