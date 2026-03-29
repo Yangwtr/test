@@ -343,8 +343,10 @@ async function generateLiveAudioPayload(text, { voiceName, stylePrompt } = {}) {
   const liveConfig = {
     model: LIVE_MODEL,
     config: {
-      responseModalities: ['AUDIO'],
-      speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: liveVoice } } },
+      generationConfig: {
+        responseModalities: ['AUDIO'],
+        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: liveVoice } } },
+      }
     },
   };
 
