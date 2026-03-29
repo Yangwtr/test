@@ -3,6 +3,7 @@ import path from 'path';
 import fsp from 'fs/promises';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
+import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -12,7 +13,9 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
-const LIVE_MODEL = process.env.GEMINI_LIVE_MODEL || 'gemini-3.1-flash-live';
+// Live API model ids change frequently; this default tracks the currently
+// documented native-audio Live model and can still be overridden via env.
+const LIVE_MODEL = process.env.GEMINI_LIVE_MODEL || 'gemini-2.5-flash-native-audio-preview-12-2025';
 const TTS_MODEL = process.env.GEMINI_TTS_MODEL || 'gemini-2.5-flash-preview-tts';
 const TTS_VOICE = process.env.GEMINI_TTS_VOICE || 'Leda';
 const TTS_STYLE = process.env.GEMINI_TTS_STYLE || '請用溫柔、清楚、像小朋友好朋友一樣自然親切的語氣朗讀。';
@@ -21,6 +24,7 @@ const API_BASE = process.env.GEMINI_API_BASE || 'https://generativelanguage.goog
 const TTS_CACHE_DIR = path.join(__dirname, '.tts-cache');
 const TTS_CACHE_READY = fsp.mkdir(TTS_CACHE_DIR, { recursive: true }).catch(() => {});
 const inflightTtsRequests = new Map();
+const ai = API_KEY ? new GoogleGenAI({ apiKey: API_KEY }) : null;
 
 const SYSTEM_INSTRUCTION = `你是「古今同頻」詩詞學習系統的 Gemini 後端助教。
 請用繁體中文回答，對象是國小學生與老師。
@@ -233,7 +237,9 @@ async function callGeminiGenerateContent(model, body) {
 
 async function generateChatResponse(contextPayload, { concise = false, voiceChat = false, useLive = true } = {}) {
   const prompt = buildChatPrompt(contextPayload, { concise, voiceChat });
-  const modelName = useLive ? LIVE_MODEL : MODEL;
+  // Text chat should stay on text-capable models. Live native-audio models are
+  // reserved for websocket audio generation in generateLiveAudioPayload().
+  const modelName = MODEL;
   const responseJson = await callGeminiGenerateContent(modelName, {
     contents: [{ parts: [{ text: prompt }] }],
     generationConfig: {
@@ -247,6 +253,7 @@ async function generateChatResponse(contextPayload, { concise = false, voiceChat
   const parsed = parseModelJsonResponse(text) || { answer: text };
   return {
     model: modelName,
+    requestedLive: !!useLive,
     answer: sanitiseDisplayText(parsed.answer || '模型沒有回傳內容。'),
     needsClarification: Boolean(parsed.needsClarification),
     suggestedFollowUp: sanitiseDisplayText(parsed.suggestedFollowUp || '', { stripEnglish: true }),
@@ -312,6 +319,7 @@ async function generateLiveAudioPayload(text, { voiceName, stylePrompt } = {}) {
   const cleanText = normaliseTtsText(text);
   const finalVoice = voiceName || TTS_VOICE;
   if (!cleanText) return makeEmptyTtsPayload({ voiceName: finalVoice });
+  if (!ai) throw new Error('伺服器尚未設定 GEMINI_API_KEY。');
 
   const promptText = [
     stylePrompt || TTS_STYLE,
@@ -319,13 +327,6 @@ async function generateLiveAudioPayload(text, { voiceName, stylePrompt } = {}) {
     cleanText,
   ].join('\n\n');
 
-  // Prefer Gemini Live via SDK websocket live.connect().
-  // Supports @google/genai first, and falls back to REST path handled by caller.
-  const mod = await import('@google/genai');
-  const GoogleGenAI = mod?.GoogleGenAI;
-  if (!GoogleGenAI) throw new Error('未找到 @google/genai 的 GoogleGenAI');
-
-  const ai = new GoogleGenAI({ apiKey: API_KEY });
   const chunks = [];
 
   let settle;
@@ -337,41 +338,81 @@ async function generateLiveAudioPayload(text, { voiceName, stylePrompt } = {}) {
     };
   });
 
-  const session = await ai.live.connect({
+  const liveConfig = {
     model: LIVE_MODEL,
     config: {
       responseModalities: ['AUDIO'],
       speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: finalVoice } } },
     },
-    callbacks: {
-      onmessage: (msg) => {
-        const parts = msg?.serverContent?.modelTurn?.parts || msg?.modelTurn?.parts || [];
-        for (const part of parts) {
-          const inline = part?.inlineData || part?.inline_data || null;
-          if (inline?.data) {
-            chunks.push({ data: inline.data, mimeType: inline.mimeType || inline.mime_type || 'audio/wav' });
-          }
-        }
-        if (msg?.serverContent?.turnComplete || msg?.turnComplete) settle.resolve();
-      },
-      onerror: (err) => settle.reject(err instanceof Error ? err : new Error(String(err || 'Gemini Live 連線錯誤'))),
-      onclose: () => { if (!chunks.length) settle.resolve(); },
-    },
-  });
+  };
 
-  await session.sendClientContent({
-    turns: [{ role: 'user', parts: [{ text: promptText }] }],
-    turnComplete: true,
-  });
+  const collectChunks = (msg) => {
+    const parts = msg?.serverContent?.modelTurn?.parts || msg?.modelTurn?.parts || [];
+    for (const part of parts) {
+      const inline = part?.inlineData || part?.inline_data || null;
+      if (inline?.data) chunks.push({ data: inline.data, mimeType: inline.mimeType || inline.mime_type || 'audio/wav' });
+    }
+    if (msg?.serverContent?.turnComplete || msg?.turnComplete) settle.resolve();
+  };
+
+  let session = null;
+  try {
+    session = await ai.live.connect(liveConfig);
+    if (typeof session?.on !== 'function' || typeof session?.send !== 'function') {
+      throw new Error('session.on/session.send 不可用，改用 callbacks 相容模式');
+    }
+    session.on('content', collectChunks);
+    session.on('error', (err) => settle.reject(err instanceof Error ? err : new Error(String(err || 'Gemini Live 連線錯誤'))));
+    session.on('close', () => { if (!chunks.length) settle.resolve(); });
+    await session.send({
+      clientContent: {
+        turns: [{ role: 'user', parts: [{ text: promptText }] }],
+        turnComplete: true,
+      },
+    });
+  } catch (_) {
+    session = await ai.live.connect({
+      ...liveConfig,
+      callbacks: {
+        onmessage: collectChunks,
+        onerror: (err) => settle.reject(err instanceof Error ? err : new Error(String(err || 'Gemini Live 連線錯誤'))),
+        onclose: () => { if (!chunks.length) settle.resolve(); },
+      },
+    });
+    await session.sendClientContent({
+      turns: [{ role: 'user', parts: [{ text: promptText }] }],
+      turnComplete: true,
+    });
+  }
 
   await done;
   try { session.close(); } catch (_) {}
 
   const first = chunks[0];
   if (!first?.data) return makeEmptyTtsPayload({ voiceName: finalVoice });
+
+  let audioBase64 = first.data;
+  let mimeType = first.mimeType || 'audio/wav';
+  if (chunks.length > 1) {
+    try {
+      const merged = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk.data, 'base64')));
+      audioBase64 = merged.toString('base64');
+      mimeType = first.mimeType || 'audio/pcm';
+    } catch (_) {
+      audioBase64 = first.data;
+      mimeType = first.mimeType || 'audio/wav';
+    }
+  }
+  if (/audio\/pcm/i.test(mimeType)) {
+    try {
+      const wavBuffer = buildWavBufferFromPcm(Buffer.from(audioBase64, 'base64'));
+      audioBase64 = wavBuffer.toString('base64');
+      mimeType = 'audio/wav';
+    } catch (_) {}
+  }
   return {
-    audioBase64: first.data,
-    mimeType: first.mimeType || 'audio/wav',
+    audioBase64,
+    mimeType,
     voiceName: finalVoice,
     ttsModel: LIVE_MODEL,
     cached: false,
