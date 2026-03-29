@@ -3,6 +3,7 @@ import path from 'path';
 import fsp from 'fs/promises';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
+import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -12,6 +13,9 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+// Live API model ids change frequently; this default tracks the currently
+// documented native-audio Live model and can still be overridden via env.
+const LIVE_MODEL = process.env.GEMINI_LIVE_MODEL || 'gemini-3.1-flash-live';
 const TTS_MODEL = process.env.GEMINI_TTS_MODEL || 'gemini-2.5-flash-preview-tts';
 const TTS_VOICE = process.env.GEMINI_TTS_VOICE || 'Leda';
 const TTS_STYLE = process.env.GEMINI_TTS_STYLE || '請用溫柔、清楚、像小朋友好朋友一樣自然親切的語氣朗讀。';
@@ -20,6 +24,7 @@ const API_BASE = process.env.GEMINI_API_BASE || 'https://generativelanguage.goog
 const TTS_CACHE_DIR = path.join(__dirname, '.tts-cache');
 const TTS_CACHE_READY = fsp.mkdir(TTS_CACHE_DIR, { recursive: true }).catch(() => {});
 const inflightTtsRequests = new Map();
+const ai = API_KEY ? new GoogleGenAI({ apiKey: API_KEY }) : null;
 
 const SYSTEM_INSTRUCTION = `你是「古今同頻」詩詞學習系統的 Gemini 後端助教。
 請用繁體中文回答，對象是國小學生與老師。
@@ -38,7 +43,7 @@ app.use(express.json({ limit: '1mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, hasKey: Boolean(API_KEY), model: MODEL, ttsModel: TTS_MODEL });
+  res.json({ ok: true, hasKey: Boolean(API_KEY), model: MODEL, liveModel: LIVE_MODEL, ttsModel: TTS_MODEL });
 });
 
 function buildChatPrompt(contextPayload, { concise = false, voiceChat = false } = {}) {
@@ -230,9 +235,12 @@ async function callGeminiGenerateContent(model, body) {
   return json;
 }
 
-async function generateChatResponse(contextPayload, { concise = false, voiceChat = false } = {}) {
+async function generateChatResponse(contextPayload, { concise = false, voiceChat = false, useLive = true } = {}) {
   const prompt = buildChatPrompt(contextPayload, { concise, voiceChat });
-  const responseJson = await callGeminiGenerateContent(MODEL, {
+  // Text chat should stay on text-capable models. Live native-audio models are
+  // reserved for websocket audio generation in generateLiveAudioPayload().
+  const modelName = MODEL;
+  const responseJson = await callGeminiGenerateContent(modelName, {
     contents: [{ parts: [{ text: prompt }] }],
     generationConfig: {
       temperature: 0.2,
@@ -244,7 +252,8 @@ async function generateChatResponse(contextPayload, { concise = false, voiceChat
   const text = extractTextParts(responseJson) || '模型沒有回傳內容。';
   const parsed = parseModelJsonResponse(text) || { answer: text };
   return {
-    model: MODEL,
+    model: modelName,
+    requestedLive: !!useLive,
     answer: sanitiseDisplayText(parsed.answer || '模型沒有回傳內容。'),
     needsClarification: Boolean(parsed.needsClarification),
     suggestedFollowUp: sanitiseDisplayText(parsed.suggestedFollowUp || '', { stripEnglish: true }),
@@ -305,6 +314,115 @@ async function generateTtsPayload(text, { voiceName, stylePrompt } = {}) {
   try { return await work; } finally { inflightTtsRequests.delete(cacheKey); }
 }
 
+
+async function generateLiveAudioPayload(text, { voiceName, stylePrompt } = {}) {
+  const cleanText = normaliseTtsText(text);
+  const finalVoice = voiceName || TTS_VOICE;
+  if (!cleanText) return makeEmptyTtsPayload({ voiceName: finalVoice });
+  if (!ai) throw new Error('伺服器尚未設定 GEMINI_API_KEY。');
+
+  const promptText = [
+    stylePrompt || TTS_STYLE,
+    '請用自然、溫柔、像老師陪讀的語氣朗讀以下內容：',
+    cleanText,
+  ].join('\n\n');
+
+  const chunks = [];
+
+  let settle;
+  const done = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Gemini Live 音訊等待逾時')), 15000);
+    settle = {
+      resolve: () => { clearTimeout(timer); resolve(); },
+      reject: (err) => { clearTimeout(timer); reject(err); },
+    };
+  });
+
+  const liveConfig = {
+    model: LIVE_MODEL,
+    config: {
+      generationConfig: {
+        responseModalities: ['AUDIO'],
+        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: finalVoice } } },
+      },
+    },
+  };
+
+  const collectChunks = (msg) => {
+    const parts = msg?.serverContent?.modelTurn?.parts || msg?.modelTurn?.parts || [];
+    for (const part of parts) {
+      const inline = part?.inlineData || part?.inline_data || null;
+      if (inline?.data) chunks.push({ data: inline.data, mimeType: inline.mimeType || inline.mime_type || 'audio/wav' });
+    }
+    if (msg?.serverContent?.turnComplete || msg?.turnComplete) settle.resolve();
+  };
+
+  let session = null;
+  try {
+    session = await ai.live.connect(liveConfig);
+    console.log(`✅ 成功建立 Gemini Live WebSocket 連線！(模型: ${LIVE_MODEL})`);
+    if (typeof session?.on !== 'function' || typeof session?.send !== 'function') {
+      throw new Error('session.on/session.send 不可用，改用 callbacks 相容模式');
+    }
+    session.on('content', collectChunks);
+    session.on('error', (err) => settle.reject(err instanceof Error ? err : new Error(String(err || 'Gemini Live 連線錯誤'))));
+    session.on('close', () => { if (!chunks.length) settle.resolve(); });
+    await session.send({
+      clientContent: {
+        turns: [{ role: 'user', parts: [{ text: promptText }] }],
+        turnComplete: true,
+      },
+    });
+  } catch (_) {
+    session = await ai.live.connect({
+      ...liveConfig,
+      callbacks: {
+        onmessage: collectChunks,
+        onerror: (err) => settle.reject(err instanceof Error ? err : new Error(String(err || 'Gemini Live 連線錯誤'))),
+        onclose: () => { if (!chunks.length) settle.resolve(); },
+      },
+    });
+    await session.sendClientContent({
+      turns: [{ role: 'user', parts: [{ text: promptText }] }],
+      turnComplete: true,
+    });
+  }
+
+  await done;
+  try { session.close(); } catch (_) {}
+
+  const first = chunks[0];
+  if (!first?.data) return makeEmptyTtsPayload({ voiceName: finalVoice });
+
+  let audioBase64 = first.data;
+  let mimeType = first.mimeType || 'audio/wav';
+  if (chunks.length > 1) {
+    try {
+      const merged = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk.data, 'base64')));
+      audioBase64 = merged.toString('base64');
+      mimeType = first.mimeType || 'audio/pcm';
+    } catch (_) {
+      audioBase64 = first.data;
+      mimeType = first.mimeType || 'audio/wav';
+    }
+  }
+  if (/audio\/pcm/i.test(mimeType)) {
+    try {
+      const wavBuffer = buildWavBufferFromPcm(Buffer.from(audioBase64, 'base64'));
+      audioBase64 = wavBuffer.toString('base64');
+      mimeType = 'audio/wav';
+    } catch (_) {}
+  }
+  return {
+    audioBase64,
+    mimeType,
+    voiceName: finalVoice,
+    ttsModel: LIVE_MODEL,
+    cached: false,
+    ttsFallback: false,
+  };
+}
+
 app.post('/api/gemini/chat', async (req, res) => {
   try {
     const {
@@ -320,13 +438,14 @@ app.post('/api/gemini/chat', async (req, res) => {
       poemsLoaded = false,
       concise = false,
       voiceChat = false,
+      useLive = true,
     } = req.body || {};
 
     if (!question || typeof question !== 'string') {
       return res.status(400).json({ error: 'question 為必填字串。' });
     }
 
-    const data = await generateChatResponse({ question, mode, reason, source, workbookLoaded, poemsLoaded, currentIntent, alternateIntent, predictions, currentPoem }, { concise: !!concise, voiceChat: !!voiceChat });
+    const data = await generateChatResponse({ question, mode, reason, source, workbookLoaded, poemsLoaded, currentIntent, alternateIntent, predictions, currentPoem }, { concise: !!concise, voiceChat: !!voiceChat, useLive: !!useLive });
     res.json(data);
   } catch (error) {
     console.error(error);
@@ -336,11 +455,22 @@ app.post('/api/gemini/chat', async (req, res) => {
 
 app.post('/api/gemini/tts', async (req, res) => {
   try {
-    const { text, voiceName = TTS_VOICE, stylePrompt = TTS_STYLE } = req.body || {};
+    const { text, voiceName = TTS_VOICE, stylePrompt = TTS_STYLE, useLive = true } = req.body || {};
     if (!text || typeof text !== 'string') {
       return res.status(400).json({ error: 'text 為必填字串。' });
     }
-    const ttsPayload = await generateTtsPayload(text, { voiceName, stylePrompt });
+    let ttsPayload = null;
+    if (useLive) {
+      try {
+        ttsPayload = await generateLiveAudioPayload(text, { voiceName, stylePrompt });
+      } catch (liveErr) {
+        console.error(liveErr);
+        ttsPayload = null;
+      }
+    }
+    if (!ttsPayload?.audioBase64) {
+      ttsPayload = await generateTtsPayload(text, { voiceName, stylePrompt });
+    }
     res.json(ttsPayload);
   } catch (error) {
     console.error(error);
@@ -366,15 +496,27 @@ app.post('/api/gemini/chat-tts', async (req, res) => {
       voiceChat = false,
       voiceName = TTS_VOICE,
       stylePrompt = TTS_STYLE,
+      useLive = true,
     } = req.body || {};
 
     if (!question || typeof question !== 'string') {
       return res.status(400).json({ error: 'question 為必填字串。' });
     }
 
-    const data = await generateChatResponse({ question, mode, reason, source, workbookLoaded, poemsLoaded, currentIntent, alternateIntent, predictions, currentPoem }, { concise: !!concise, voiceChat: !!voiceChat });
+    const data = await generateChatResponse({ question, mode, reason, source, workbookLoaded, poemsLoaded, currentIntent, alternateIntent, predictions, currentPoem }, { concise: !!concise, voiceChat: !!voiceChat, useLive: !!useLive });
     try {
-      const ttsPayload = await generateTtsPayload(data.answer, { voiceName, stylePrompt });
+      let ttsPayload = null;
+      if (useLive) {
+        try {
+          ttsPayload = await generateLiveAudioPayload(data.answer, { voiceName, stylePrompt });
+        } catch (liveErr) {
+          console.error(liveErr);
+          ttsPayload = null;
+        }
+      }
+      if (!ttsPayload?.audioBase64) {
+        ttsPayload = await generateTtsPayload(data.answer, { voiceName, stylePrompt });
+      }
       res.json({ ...data, ...ttsPayload, ttsFallback: !!ttsPayload.ttsFallback, quotaExceeded: !!ttsPayload.quotaExceeded, ttsError: ttsPayload.error || '' });
     } catch (ttsError) {
       console.error(ttsError);
