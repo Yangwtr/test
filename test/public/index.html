@@ -969,7 +969,8 @@
         body: JSON.stringify({
           text: content,
           voiceName: options.voiceName || 'Leda',
-          stylePrompt: options.stylePrompt || '請用溫柔、清楚、像小朋友好朋友一樣自然親切的語氣朗讀。'
+          stylePrompt: options.stylePrompt || '請用溫柔、清楚、像小朋友好朋友一樣自然親切的語氣朗讀。',
+          useLive: true
         })
       });
       const data = await res.json().catch(() => ({}));

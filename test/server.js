@@ -369,11 +369,22 @@ app.post('/api/gemini/chat', async (req, res) => {
 
 app.post('/api/gemini/tts', async (req, res) => {
   try {
-    const { text, voiceName = TTS_VOICE, stylePrompt = TTS_STYLE } = req.body || {};
+    const { text, voiceName = TTS_VOICE, stylePrompt = TTS_STYLE, useLive = true } = req.body || {};
     if (!text || typeof text !== 'string') {
       return res.status(400).json({ error: 'text 為必填字串。' });
     }
-    const ttsPayload = await generateTtsPayload(text, { voiceName, stylePrompt });
+    let ttsPayload = null;
+    if (useLive) {
+      try {
+        ttsPayload = await generateLiveAudioPayload(text, { voiceName, stylePrompt });
+      } catch (liveErr) {
+        console.error(liveErr);
+        ttsPayload = null;
+      }
+    }
+    if (!ttsPayload?.audioBase64) {
+      ttsPayload = await generateTtsPayload(text, { voiceName, stylePrompt });
+    }
     res.json(ttsPayload);
   } catch (error) {
     console.error(error);
