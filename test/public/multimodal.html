@@ -557,7 +557,10 @@ let qaWorkbookConfig = {
 let currentPoem = null;
 let imageMatchedPoems = [];
 let emotionMatchedPoems = [];
+let imageTopLabel = '';
+let imageTopConfidence = 0;
 let faceSnapshotDataUrl = '';
+let lastQaUserText = '';
 let geminiAvailable = false;
 let lastIntentResult = null;
 let currentPredictions = [];
@@ -2147,6 +2150,8 @@ async function classifyImage(file){
 
         renderPredictions(top.map(r => ({label:r.label, confidence:r.confidence || 0})));
         const best = top[0] || null;
+        imageTopLabel = best?.label || '';
+        imageTopConfidence = Number(best?.confidence || 0);
         let found = [];
         if(best){
           for(const candidate of normalizeLabelCandidates(best.label)){
@@ -2170,6 +2175,7 @@ async function classifyImage(file){
         resolve({ top, best, found, backend });
       }catch(err){
         console.error(err);
+        imageTopLabel = ''; imageTopConfidence = 0;
         $('imgRawResult').innerHTML = `<div class="text-xs text-center py-3" style="color:#e5a9a2">辨識失敗：${escapeHtml(err.message || String(err))}</div>`;
         $('imgCatResult').innerHTML = '<div class="text-xs text-center" style="color:var(--ink-gray)">請重新選擇圖片後再試一次</div>';
         try{ buildCatMapLegend(); }catch(_){ }
@@ -2178,6 +2184,7 @@ async function classifyImage(file){
       }
     };
     img.onerror = () => {
+      imageTopLabel = ''; imageTopConfidence = 0;
       $('imgRawResult').innerHTML = '<div class="text-xs text-center py-3" style="color:#e5a9a2">圖片載入失敗</div>';
       $('imgCatResult').innerHTML = '<div class="text-xs text-center" style="color:var(--ink-gray)">請重新選擇圖片</div>';
       setStatus('圖片載入失敗','err');
@@ -2505,9 +2512,16 @@ pingGeminiHealth();
   let voiceChatBusy = false;
   let voiceChatAwaiting = false;
   let voiceChatListening = false;
+  const VOICE_RESUME_DELAY_MS = 1200;
   let ttsSpeaking = false;
   let faceStableSinceMs = null;
   let frontConversationLog = [];
+  let qaSilenceTimer = null;
+  let qaBufferedFinalText = '';
+  let qaLatestPreviewText = '';
+  let qaAutoRunning = false;
+  let qaProcessing = false;
+  let qaAutoResponding = false;
 
   async function ensureMicAccess(){
     if(!navigator.mediaDevices?.getUserMedia) return true;
@@ -2558,7 +2572,7 @@ pingGeminiHealth();
     const speakText = shortSpeakText(rawText);
     if(!speakText) {
       if(voiceChatActive && !voiceChatAwaiting){
-        setTimeout(() => { try { voiceChatRec && voiceChatRec.start(); } catch(_){} }, 250);
+        setTimeout(() => { try { voiceChatRec && voiceChatRec.start(); } catch(_){} }, VOICE_RESUME_DELAY_MS);
       }
       return false;
     }
@@ -2577,8 +2591,8 @@ pingGeminiHealth();
       }
       if(played){
         if(voiceChatActive && !voiceChatAwaiting){
-          setVoiceChatStatus('等待下一句語音…', 'var(--gold-light)');
-          setTimeout(() => { try { voiceChatRec && voiceChatRec.start(); } catch(_){} }, 220);
+          setVoiceChatStatus('回覆完成，準備重新收音…', 'var(--gold-light)');
+          setTimeout(() => { try { voiceChatRec && voiceChatRec.start(); } catch(_){} }, VOICE_RESUME_DELAY_MS);
         }
         return true;
       }
@@ -2600,15 +2614,15 @@ pingGeminiHealth();
       ttsSpeaking = false;
       updateVoiceButtons();
       if(voiceChatActive && !voiceChatAwaiting){
-        setVoiceChatStatus('等待下一句語音…', 'var(--gold-light)');
-        setTimeout(() => { try { voiceChatRec && voiceChatRec.start(); } catch(_){} }, 250);
+        setVoiceChatStatus('回覆完成，準備重新收音…', 'var(--gold-light)');
+        setTimeout(() => { try { voiceChatRec && voiceChatRec.start(); } catch(_){} }, VOICE_RESUME_DELAY_MS);
       }
     };
     utter.onerror = () => {
       ttsSpeaking = false;
       updateVoiceButtons();
       if(voiceChatActive && !voiceChatAwaiting){
-        setTimeout(() => { try { voiceChatRec && voiceChatRec.start(); } catch(_){} }, 250);
+        setTimeout(() => { try { voiceChatRec && voiceChatRec.start(); } catch(_){} }, VOICE_RESUME_DELAY_MS);
       }
     };
     ttsSpeaking = true;
@@ -2646,7 +2660,8 @@ pingGeminiHealth();
         alternateIntent: lastIntentResult?.second || null,
         source: $('resultSource')?.textContent || '',
         workbookLoaded: qaWorkbookConfig?.loaded,
-        poemsLoaded
+        poemsLoaded,
+        useLive: true
       })
     });
     const data = await res.json().catch(() => ({}));
@@ -2708,15 +2723,100 @@ pingGeminiHealth();
     }
   };
 
+
+
+  function scheduleQaRestart(delay=260, retries=3){
+    if(!qaAutoRunning || qaProcessing || qaAutoResponding) return;
+    setTimeout(() => {
+      const startWithRetry = (left) => {
+        if(!qaAutoRunning || qaProcessing || qaAutoResponding) return;
+        try{
+          if(stt && !qaRecRunning){
+            stt.lang = $('sttLang')?.value || 'zh-TW';
+            stt.start();
+            return;
+          }
+        }catch(_){ }
+        if(left > 0) setTimeout(() => startWithRetry(left - 1), 260);
+      };
+      startWithRetry(retries);
+    }, delay);
+  }
+
   function stopAnalysisRecognizer(){
     if(analysisRec){ try{ analysisRec.onend = ()=>{}; analysisRec.stop(); }catch(_){} }
     analysisRecRunning = false;
   }
 
+  function clearQaSilenceTimer(){
+    if(qaSilenceTimer){ clearTimeout(qaSilenceTimer); qaSilenceTimer = null; }
+  }
+
+  async function flushQaBufferedSpeech(){
+    const text = String(qaBufferedFinalText || qaLatestPreviewText || '').trim();
+    clearQaSilenceTimer();
+    qaBufferedFinalText = '';
+    qaLatestPreviewText = '';
+    if(!text || qaProcessing) return;
+    qaProcessing = true;
+    qaAutoResponding = true;
+    try{
+      if(stt && qaRecRunning){ try{ stt.stop(); }catch(_){} }
+      const li = document.createElement('li');
+      li.style.cssText='border:1px solid rgba(201,151,62,0.2);background:rgba(12,9,5,0.5);border-radius:2px;padding:5px 8px;font-size:0.82rem';
+      li.textContent = text;
+      $('sttSentences').appendChild(li);
+      if($('txtGemini')) $('txtGemini').value = text;
+      $('sttInterim').textContent = '';
+      $('sttStatus').textContent = '已偵測停頓 2 秒，正在回答…';
+      const shouldSpeak = !!($('chkSpeakReply')?.checked);
+      clearFrontConversationLog();
+      if($('sttSentences')) $('sttSentences').innerHTML = '';
+      lastQaUserText = text;
+      pushFrontConversationLog('user', text);
+      if(poemsLoaded){
+        await handleSentence(text, { skipLog: true });
+        const ruleReply = cleanGeminiText(($('qaReply')?.textContent || '').trim());
+        if(ruleReply && ruleReply !== '（尚未開始）'){
+          pushFrontConversationLog('assistant', ruleReply);
+          if(shouldSpeak) await speakTextWithGeminiFirst(ruleReply, { bubbleText:'我來回答你。', voiceName:'Leda' });
+        }
+      }
+      const qaText = cleanGeminiText((bridgePlainText('qaReply', '') || '').trim());
+      if(!qaText || qaText === '（尚未開始）'){
+        if(geminiAvailable){
+          const data = await requestGemini(text, { mode:'voice_auto', reason:'qa_silence_flush', concise:true, withAudio:shouldSpeak, voiceName:'Leda' });
+          const replyText = formatGeminiReply('', data);
+          setReply(replyText);
+          pushFrontConversationLog('assistant', replyText);
+          if(shouldSpeak) await speakGeminiAnswer(data);
+        }else{
+          const failMsg = '目前無法取得回覆，請確認 Gemini 後端是否就緒。';
+          setReply(failMsg);
+          pushFrontConversationLog('assistant', failMsg);
+        }
+      }
+      if($('txtGemini')) $('txtGemini').value = '';
+      $('sttStatus').textContent = '回覆完成，繼續監聽中…';
+    }catch(err){
+      $('sttStatus').textContent = '語音問答處理失敗，請再試一次。';
+    }finally{
+      qaProcessing = false;
+      qaAutoResponding = false;
+      if(qaAutoRunning) scheduleQaRestart(VOICE_RESUME_DELAY_MS, 4);
+      updateVoiceButtons();
+    }
+  }
+
   function stopQaStt(){
+    qaAutoRunning = false;
+    clearQaSilenceTimer();
+    qaBufferedFinalText = '';
+    qaLatestPreviewText = '';
     if(stt && qaRecRunning){ try{ stt.stop(); }catch(_){} }
     qaRecRunning = false;
     sttRunning = false;
+    $('sttInterim').textContent = '';
     updateVoiceButtons();
   }
 
@@ -2811,12 +2911,15 @@ pingGeminiHealth();
       qaRecRunning = false;
       sttRunning = false;
       updateVoiceButtons();
-      $('sttInterim').textContent = '';
-      if(!voiceChatActive) $('sttStatus').textContent = '已停止';
+      if(qaAutoRunning && !qaProcessing && !qaAutoResponding && !voiceChatActive){
+        scheduleQaRestart(260, 4);
+        return;
+      }
+      if(!qaAutoRunning && !voiceChatActive) $('sttStatus').textContent = '已停止';
     };
     rec.onerror = e => {
       const err = e?.error || 'unknown';
-      if (err === 'no-speech') { $('sttStatus').textContent = '我剛剛沒有聽到聲音，請再說一次。'; return; }
+      if (err === 'no-speech') { $('sttStatus').textContent = '我剛剛沒有聽到聲音，持續收音中…'; if(qaAutoRunning && !qaProcessing && !qaAutoResponding){ scheduleQaRestart(260, 4); } return; }
       $('sttStatus').textContent = err === 'not-allowed' ? '請先允許麥克風權限，再試一次。' : '語音辨識暫時不穩定，請再試一次。';
     };
     rec.onresult = ev => {
@@ -2825,19 +2928,14 @@ pingGeminiHealth();
         const t = ev.results[i][0].transcript;
         ev.results[i].isFinal ? fin += t : interim += t;
       }
-      $('sttInterim').textContent = interim.trim();
-      if(fin.trim()){
-        const parts = fin.split(/(?<=[。！？!?])/).map(x => x.trim()).filter(Boolean);
-        const list = parts.length ? parts : [fin.trim()];
-        for(const s of list){
-          const li = document.createElement('li');
-          li.style.cssText='border:1px solid rgba(201,151,62,0.2);background:rgba(12,9,5,0.5);border-radius:2px;padding:5px 8px;font-size:0.82rem';
-          li.textContent = s;
-          $('sttSentences').appendChild(li);
-          handleSentence(s);
-        }
-        $('sttInterim').textContent = '';
-        $('sttStatus').textContent = '收到一句，等待下一句…';
+      if(fin.trim()) qaBufferedFinalText = `${qaBufferedFinalText} ${fin}`.trim();
+      const previewText = `${qaBufferedFinalText} ${interim}`.trim();
+      qaLatestPreviewText = previewText;
+      $('sttInterim').textContent = previewText;
+      if(previewText){
+        $('sttStatus').textContent = '收音中…停止說話 2 秒後會自動回覆';
+        clearQaSilenceTimer();
+        qaSilenceTimer = setTimeout(() => { flushQaBufferedSpeech(); }, 2000);
       }
     };
     return rec;
@@ -2848,6 +2946,10 @@ pingGeminiHealth();
     stopVoiceChat(false);
     const ok = await ensureMicAccess();
     if(!ok) return;
+    qaAutoRunning = true;
+    clearQaSilenceTimer();
+    qaBufferedFinalText = '';
+    qaLatestPreviewText = '';
     if(!stt) stt = initStt();
     if(!stt) return;
     try{ stt.lang = $('sttLang')?.value || 'zh-TW'; stt.start(); }catch(_){ }
@@ -2922,17 +3024,13 @@ pingGeminiHealth();
         setReply('Gemini 回答中…');
         setVoiceChatStatus('Gemini 回答中…', 'var(--gold-light)');
         try{
-          const autoSpeak = !!($('chkSpeakReply')?.checked);
-          const data = await requestGemini(question, {mode:'voice_chat', reason:'voice_chat_turn', concise:true, voiceChat:true, withAudio:autoSpeak, voiceName:'Leda'});
+          const autoSpeak = true;
+          const data = await requestGemini(question, {mode:'voice_chat', reason:'voice_chat_turn', concise:true, voiceChat:true, withAudio:true, voiceName:'Leda'});
           const replyText = formatGeminiReply(`【語音提問】${question}`, data);
           setReply(replyText);
           pushFrontConversationLog('assistant', replyText);
           voiceChatAwaiting = false;
-          if(autoSpeak) await speakGeminiAnswer(data);
-          else if(voiceChatActive){
-            setVoiceChatStatus('等待下一句語音…', 'var(--gold-light)');
-            setTimeout(() => { try { rec.start(); } catch(_){} }, 250);
-          }
+          await speakGeminiAnswer(data);
         }catch(err){
           voiceChatAwaiting = false;
           const rawMsg = String(err?.message || err || '');
@@ -3399,9 +3497,15 @@ function readQuizQuestion(){
       currentPoem: bridgePoem(currentPoem),
       imageMatchedPoems: imageMatchedPoems.map(bridgePoem).filter(Boolean),
       emotionMatchedPoems: emotionMatchedPoems.map(bridgePoem).filter(Boolean),
+      imageTopLabel: imageTopLabel || '',
+      imageTopConfidence: Number(imageTopConfidence || 0),
       faceSnapshotDataUrl: faceSnapshotDataUrl || '',
       currentPoemText: bridgePlainText('currentPoem', '未選取'),
       qaReply: bridgePlainText('qaReply', ''),
+      lastQaUserText: lastQaUserText || '',
+      qaInputText: bridgePlainText('txtGemini', ''),
+      sttInterimText: bridgePlainText('sttInterim', ''),
+      qaAutoResponding: !!qaAutoResponding,
       conversationLog: frontConversationLog.map(item => ({ role: item.role, text: item.text })),
       sttStatus: bridgePlainText('sttStatus', ''),
       voiceChatStatus: bridgePlainText('voiceChatStatus', ''),
@@ -3445,6 +3549,8 @@ function readQuizQuestion(){
     try{ stopVoiceChat(true); }catch(_){ }
     if($('txtGemini')) $('txtGemini').value = '';
     if($('qaReply')) $('qaReply').textContent = '';
+    lastQaUserText = '';
+    qaAutoResponding = false;
     if($('sttSentences')) $('sttSentences').innerHTML = '';
     if($('sttInterim')) $('sttInterim').textContent = '';
     if($('sttStatus')) $('sttStatus').textContent = '語音問答待命';
@@ -3458,6 +3564,7 @@ function readQuizQuestion(){
     if($('imgFile')) $('imgFile').value = '';
     if($('imgPreview')){ $('imgPreview').src = ''; $('imgPreview').classList.add('hidden'); }
     if($('imgHint')) $('imgHint').classList.remove('hidden');
+    imageTopLabel = ''; imageTopConfidence = 0;
     if($('imgRawResult')) $('imgRawResult').innerHTML = '<div class="text-xs text-center py-4" style="color:var(--ink-gray)">等待辨識</div>';
     if($('imgCatResult')) $('imgCatResult').innerHTML = '<div class="text-xs text-center" style="color:var(--ink-gray)">對應結果會顯示於此</div>';
     imageMatchedPoems = [];
