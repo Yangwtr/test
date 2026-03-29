@@ -12,9 +12,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
-// Live API model ids change frequently; this default tracks the currently
-// documented native-audio Live model and can still be overridden via env.
-const LIVE_MODEL = process.env.GEMINI_LIVE_MODEL || 'gemini-2.5-flash-native-audio-preview-12-2025';
+const LIVE_MODEL = process.env.GEMINI_LIVE_MODEL || 'gemini-3.1-flash-live';
 const TTS_MODEL = process.env.GEMINI_TTS_MODEL || 'gemini-2.5-flash-preview-tts';
 const TTS_VOICE = process.env.GEMINI_TTS_VOICE || 'Leda';
 const TTS_STYLE = process.env.GEMINI_TTS_STYLE || '請用溫柔、清楚、像小朋友好朋友一樣自然親切的語氣朗讀。';
@@ -235,9 +233,7 @@ async function callGeminiGenerateContent(model, body) {
 
 async function generateChatResponse(contextPayload, { concise = false, voiceChat = false, useLive = true } = {}) {
   const prompt = buildChatPrompt(contextPayload, { concise, voiceChat });
-  // Text chat should stay on text-capable models. Live native-audio models are
-  // reserved for websocket audio generation in generateLiveAudioPayload().
-  const modelName = MODEL;
+  const modelName = useLive ? LIVE_MODEL : MODEL;
   const responseJson = await callGeminiGenerateContent(modelName, {
     contents: [{ parts: [{ text: prompt }] }],
     generationConfig: {
@@ -251,7 +247,6 @@ async function generateChatResponse(contextPayload, { concise = false, voiceChat
   const parsed = parseModelJsonResponse(text) || { answer: text };
   return {
     model: modelName,
-    requestedLive: !!useLive,
     answer: sanitiseDisplayText(parsed.answer || '模型沒有回傳內容。'),
     needsClarification: Boolean(parsed.needsClarification),
     suggestedFollowUp: sanitiseDisplayText(parsed.suggestedFollowUp || '', { stripEnglish: true }),
@@ -374,29 +369,9 @@ async function generateLiveAudioPayload(text, { voiceName, stylePrompt } = {}) {
 
   const first = chunks[0];
   if (!first?.data) return makeEmptyTtsPayload({ voiceName: finalVoice });
-
-  let audioBase64 = first.data;
-  let mimeType = first.mimeType || 'audio/wav';
-  if (chunks.length > 1) {
-    try {
-      const merged = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk.data, 'base64')));
-      audioBase64 = merged.toString('base64');
-      mimeType = first.mimeType || 'audio/pcm';
-    } catch (_) {
-      audioBase64 = first.data;
-      mimeType = first.mimeType || 'audio/wav';
-    }
-  }
-  if (/audio\/pcm/i.test(mimeType)) {
-    try {
-      const wavBuffer = buildWavBufferFromPcm(Buffer.from(audioBase64, 'base64'));
-      audioBase64 = wavBuffer.toString('base64');
-      mimeType = 'audio/wav';
-    } catch (_) {}
-  }
   return {
-    audioBase64,
-    mimeType,
+    audioBase64: first.data,
+    mimeType: first.mimeType || 'audio/wav',
     voiceName: finalVoice,
     ttsModel: LIVE_MODEL,
     cached: false,
