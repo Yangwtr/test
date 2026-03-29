@@ -320,6 +320,8 @@ async function generateLiveAudioPayload(text, { voiceName, stylePrompt } = {}) {
   const finalVoice = voiceName || TTS_VOICE;
   if (!cleanText) return makeEmptyTtsPayload({ voiceName: finalVoice });
   if (!ai) throw new Error('伺服器尚未設定 GEMINI_API_KEY。');
+  const validLiveVoices = ['Aoede', 'Charon', 'Fenrir', 'Kore', 'Puck'];
+  const liveVoice = validLiveVoices.includes(finalVoice) ? finalVoice : 'Aoede';
 
   const promptText = [
     stylePrompt || TTS_STYLE,
@@ -341,10 +343,8 @@ async function generateLiveAudioPayload(text, { voiceName, stylePrompt } = {}) {
   const liveConfig = {
     model: LIVE_MODEL,
     config: {
-      generationConfig: {
-        responseModalities: ['AUDIO'],
-        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: finalVoice } } },
-      },
+      responseModalities: ['AUDIO'],
+      speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: liveVoice } } },
     },
   };
 
