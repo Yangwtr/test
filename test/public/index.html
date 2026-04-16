@@ -126,10 +126,20 @@
       overflow: hidden;
     }
     #video-mascot, #img-mascot-poster { max-width: 100%; max-height: 100%; border-radius: 18px; }
+    #mascot-frosted-mask {
+      position: absolute;
+      inset: 0;
+      background: rgba(255, 255, 255, 0.38);
+      backdrop-filter: blur(10px) saturate(0.9);
+      -webkit-backdrop-filter: blur(10px) saturate(0.9);
+      pointer-events: none;
+      z-index: 2;
+    }
     #mascot-glow {
       position:absolute; inset:auto 18% 6% 18%; height:18%;
       background: radial-gradient(circle, rgba(79,124,255,0.18) 0%, rgba(79,124,255,0) 70%);
       pointer-events:none;
+      z-index: 3;
     }
     #text-mascot-bubble {
       border-radius: 18px;
@@ -308,6 +318,7 @@
               <source src="assets/mascot-wave.mp4" type="video/mp4" />
             </video>
             <img id="img-mascot-poster" class="hidden" src="assets/mascot-poster.png" alt="小書僮公仔" />
+            <div id="mascot-frosted-mask"></div>
             <div id="mascot-glow"></div>
           </div>
           <div id="text-mascot-bubble">你好呀！今天想先問我，還是讓我考考你呢？</div>
@@ -334,14 +345,14 @@
 
             <section id="panel-mode-ask" class="mode-panel">
               <div class="card">
-                <h3 class="card-title">問問三光寶貝</h3>
-                <p class="helper-text">你可以打字問我；按「與三光寶貝對話」後直接說話，系統會在 2 秒無人聲後自動回答並唸出回覆。</p>
+                <h3 class="card-title">問問AI寶貝</h3>
+                <p class="helper-text">你可以打字問我；按「與AI寶貝對話」後直接說話，系統會在 2 秒無人聲後自動回答並唸出回覆。</p>
                 <div class="input-shell" style="margin-top:10px;">
                   <textarea id="input-ask-question" placeholder="請輸入你想問的問題……"></textarea>
                   <button id="btn-ask-submit" class="control-btn primary-btn">送出問題</button>
                 </div>
                 <div class="inline-actions" style="margin-top:10px;">
-                  <button id="btn-ask-voice-start" class="control-btn primary-btn">與三光寶貝對話</button>
+                  <button id="btn-ask-voice-start" class="control-btn primary-btn">與AI寶貝對話</button>
                   <button id="btn-ask-voice-stop" class="control-btn danger-btn">停止收音</button>
                   <button id="btn-ask-read-aloud" class="control-btn">重播公仔回答</button>
                   <button id="btn-ask-reset" class="control-btn">清空對話</button>
@@ -700,7 +711,7 @@
         return;
       }
       box.innerHTML = state.conversationLog.map(item => {
-        const label = item.role === 'user' ? '你' : '三光寶貝';
+        const label = item.role === 'user' ? '你' : 'AI寶貝';
         const bg = item.role === 'user' ? 'var(--primary-weak)' : 'var(--soft-yellow)';
         const color = item.role === 'user' ? 'var(--primary)' : 'var(--text)';
         const align = item.role === 'user' ? 'end' : 'start';
