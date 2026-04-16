@@ -1006,13 +1006,6 @@
           await playAudioBase64(payload.audioBase64, payload.mimeType || 'audio/wav');
           return true;
         }
-        if (!payload?.ttsFallback) {
-          const tts = await requestGeminiNativeTts(text, options);
-          if (tts?.audioBase64) {
-            await playAudioBase64(tts.audioBase64, tts.mimeType || 'audio/wav');
-            return true;
-          }
-        }
       } catch (err) {
         console.warn('Gemini Native Speech failed, fallback to browser TTS.', err);
       }
