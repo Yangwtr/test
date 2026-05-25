@@ -2515,9 +2515,11 @@ pingGeminiHealth();
   const VOICE_RESUME_DELAY_MS = 1200;
   const VOICE_ECHO_GUARD_MS = 1600;
   let ttsSpeaking = false;
+  let voiceReplySpeaking = false;
   let lastEngineSpokenReplyKey = '';
   let voiceRestartTimer = null;
   let voiceEchoGuardUntil = 0;
+  let voiceTurnId = 0;
   let faceStableSinceMs = null;
   let frontConversationLog = [];
   let qaSilenceTimer = null;
@@ -2563,11 +2565,11 @@ pingGeminiHealth();
 
   function scheduleVoiceChatRestart(delay = VOICE_RESUME_DELAY_MS){
     clearVoiceRestartTimer();
-    if(!voiceChatActive || voiceChatAwaiting || voiceChatBusy || ttsSpeaking) return;
+    if(!voiceChatActive || voiceChatAwaiting || voiceChatBusy || ttsSpeaking || voiceReplySpeaking) return;
     const d = Math.max(220, Number(delay) || VOICE_RESUME_DELAY_MS);
     voiceRestartTimer = setTimeout(() => {
       voiceRestartTimer = null;
-      if(!voiceChatActive || voiceChatAwaiting || voiceChatBusy || ttsSpeaking || voiceChatListening) return;
+      if(!voiceChatActive || voiceChatAwaiting || voiceChatBusy || ttsSpeaking || voiceReplySpeaking || voiceChatListening) return;
       try { voiceChatRec && voiceChatRec.start(); } catch(_){}
     }, d);
   }
@@ -2586,6 +2588,7 @@ pingGeminiHealth();
       return false;
     }
     lastEngineSpokenReplyKey = speakKey;
+    voiceReplySpeaking = true;
     stopSpeaking();
     setVoiceChatStatus('Gemini 朗讀中…', 'var(--gold-light)');
     updateVoiceButtons();
@@ -2603,6 +2606,7 @@ pingGeminiHealth();
         if(voiceChatActive && !voiceChatAwaiting){
           voiceEchoGuardUntil = Date.now() + VOICE_ECHO_GUARD_MS;
           setVoiceChatStatus('回覆完成，準備重新收音…', 'var(--gold-light)');
+          voiceReplySpeaking = false;
           scheduleVoiceChatRestart(VOICE_RESUME_DELAY_MS);
         }
         return true;
@@ -2623,6 +2627,7 @@ pingGeminiHealth();
     };
     utter.onend = () => {
       ttsSpeaking = false;
+      voiceReplySpeaking = false;
       updateVoiceButtons();
       if(voiceChatActive && !voiceChatAwaiting){
         voiceEchoGuardUntil = Date.now() + VOICE_ECHO_GUARD_MS;
@@ -2632,6 +2637,7 @@ pingGeminiHealth();
     };
     utter.onerror = () => {
       ttsSpeaking = false;
+      voiceReplySpeaking = false;
       updateVoiceButtons();
       if(voiceChatActive && !voiceChatAwaiting){
         scheduleVoiceChatRestart(VOICE_RESUME_DELAY_MS);
@@ -2980,7 +2986,7 @@ pingGeminiHealth();
       voiceChatListening = false;
       updateVoiceButtons();
       $('sttInterim').textContent = '';
-      if(voiceChatActive && !voiceChatAwaiting && !ttsSpeaking){
+      if(voiceChatActive && !voiceChatAwaiting && !ttsSpeaking && !voiceReplySpeaking){
         setVoiceChatStatus('等待下一句語音…', 'var(--gold-light)');
         scheduleVoiceChatRestart(VOICE_RESUME_DELAY_MS);
       } else if(!voiceChatActive) {
@@ -3025,6 +3031,7 @@ pingGeminiHealth();
       if(Date.now() < voiceEchoGuardUntil) return;
       if(fin.trim() && !voiceChatBusy){
         const question = fin.trim();
+        const turnId = ++voiceTurnId;
         pushFrontConversationLog('user', question);
         const li = document.createElement('li');
         li.style.cssText='border:1px solid rgba(201,151,62,0.2);background:rgba(12,9,5,0.5);border-radius:2px;padding:5px 8px;font-size:0.82rem';
@@ -3042,7 +3049,7 @@ pingGeminiHealth();
           setReply(replyText);
           pushFrontConversationLog('assistant', replyText);
           voiceChatAwaiting = false;
-          await speakGeminiAnswer(data);
+          if(turnId === voiceTurnId) await speakGeminiAnswer(data);
         }catch(err){
           voiceChatAwaiting = false;
           const rawMsg = String(err?.message || err || '');
@@ -3067,6 +3074,7 @@ pingGeminiHealth();
     voiceChatActive = false;
     voiceChatBusy = false;
     voiceChatAwaiting = false;
+    voiceReplySpeaking = false;
     if(stopSpeechToo) stopSpeaking();
     if(voiceChatRec){ try{ voiceChatRec.onend = ()=>{ voiceChatListening = false; updateVoiceButtons(); }; voiceChatRec.stop(); }catch(_){} }
     voiceChatListening = false;
@@ -3087,6 +3095,7 @@ pingGeminiHealth();
     if(!voiceChatRec){ setVoiceChatStatus('此瀏覽器不支援語音辨識', '#e05050'); return; }
     voiceChatActive = true;
     voiceChatAwaiting = false;
+    voiceReplySpeaking = false;
     voiceEchoGuardUntil = 0;
     setVoiceChatStatus('正在啟動語音對話…', 'var(--gold-light)');
     updateVoiceButtons();
