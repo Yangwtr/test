@@ -2513,8 +2513,11 @@ pingGeminiHealth();
   let voiceChatAwaiting = false;
   let voiceChatListening = false;
   const VOICE_RESUME_DELAY_MS = 1200;
+  const VOICE_ECHO_GUARD_MS = 1600;
   let ttsSpeaking = false;
   let lastEngineSpokenReplyKey = '';
+  let voiceRestartTimer = null;
+  let voiceEchoGuardUntil = 0;
   let faceStableSinceMs = null;
   let frontConversationLog = [];
   let qaSilenceTimer = null;
@@ -2554,6 +2557,21 @@ pingGeminiHealth();
     updateVoiceButtons();
   }
 
+  function clearVoiceRestartTimer(){
+    if(voiceRestartTimer){ clearTimeout(voiceRestartTimer); voiceRestartTimer = null; }
+  }
+
+  function scheduleVoiceChatRestart(delay = VOICE_RESUME_DELAY_MS){
+    clearVoiceRestartTimer();
+    if(!voiceChatActive || voiceChatAwaiting || voiceChatBusy || ttsSpeaking) return;
+    const d = Math.max(220, Number(delay) || VOICE_RESUME_DELAY_MS);
+    voiceRestartTimer = setTimeout(() => {
+      voiceRestartTimer = null;
+      if(!voiceChatActive || voiceChatAwaiting || voiceChatBusy || ttsSpeaking || voiceChatListening) return;
+      try { voiceChatRec && voiceChatRec.start(); } catch(_){}
+    }, d);
+  }
+
   async function speakGeminiAnswer(payloadOrText){
     const rawText = typeof payloadOrText === 'object'
       ? (payloadOrText?.answer || payloadOrText?.text || '')
@@ -2563,7 +2581,7 @@ pingGeminiHealth();
     if(speakKey && speakKey === lastEngineSpokenReplyKey) return false;
     if(!speakText) {
       if(voiceChatActive && !voiceChatAwaiting){
-        setTimeout(() => { try { voiceChatRec && voiceChatRec.start(); } catch(_){} }, VOICE_RESUME_DELAY_MS);
+        scheduleVoiceChatRestart(VOICE_RESUME_DELAY_MS);
       }
       return false;
     }
@@ -2583,8 +2601,9 @@ pingGeminiHealth();
       }
       if(played){
         if(voiceChatActive && !voiceChatAwaiting){
+          voiceEchoGuardUntil = Date.now() + VOICE_ECHO_GUARD_MS;
           setVoiceChatStatus('回覆完成，準備重新收音…', 'var(--gold-light)');
-          setTimeout(() => { try { voiceChatRec && voiceChatRec.start(); } catch(_){} }, VOICE_RESUME_DELAY_MS);
+          scheduleVoiceChatRestart(VOICE_RESUME_DELAY_MS);
         }
         return true;
       }
@@ -2606,15 +2625,16 @@ pingGeminiHealth();
       ttsSpeaking = false;
       updateVoiceButtons();
       if(voiceChatActive && !voiceChatAwaiting){
+        voiceEchoGuardUntil = Date.now() + VOICE_ECHO_GUARD_MS;
         setVoiceChatStatus('回覆完成，準備重新收音…', 'var(--gold-light)');
-        setTimeout(() => { try { voiceChatRec && voiceChatRec.start(); } catch(_){} }, VOICE_RESUME_DELAY_MS);
+        scheduleVoiceChatRestart(VOICE_RESUME_DELAY_MS);
       }
     };
     utter.onerror = () => {
       ttsSpeaking = false;
       updateVoiceButtons();
       if(voiceChatActive && !voiceChatAwaiting){
-        setTimeout(() => { try { voiceChatRec && voiceChatRec.start(); } catch(_){} }, VOICE_RESUME_DELAY_MS);
+        scheduleVoiceChatRestart(VOICE_RESUME_DELAY_MS);
       }
     };
     ttsSpeaking = true;
@@ -2962,7 +2982,7 @@ pingGeminiHealth();
       $('sttInterim').textContent = '';
       if(voiceChatActive && !voiceChatAwaiting && !ttsSpeaking){
         setVoiceChatStatus('等待下一句語音…', 'var(--gold-light)');
-        setTimeout(() => { try { rec.start(); } catch(_){} }, 220);
+        scheduleVoiceChatRestart(VOICE_RESUME_DELAY_MS);
       } else if(!voiceChatActive) {
         setVoiceChatStatus('語音對話待命');
       }
@@ -2973,14 +2993,14 @@ pingGeminiHealth();
         setVoiceChatStatus('我還沒聽清楚，你再說一次。', 'var(--gold-light)');
         $('sttStatus').textContent = '我還沒聽清楚，你再說一次。';
         if (voiceChatActive && !voiceChatAwaiting && !ttsSpeaking) {
-          setTimeout(() => { try { rec.start(); } catch(_){} }, 260);
+          scheduleVoiceChatRestart(VOICE_RESUME_DELAY_MS);
         }
         return;
       }
       if (err === 'aborted' || err === 'audio-capture') {
         setVoiceChatStatus('我剛剛被打斷了，正在重新準備收音。', 'var(--gold-light)');
         if (voiceChatActive && !voiceChatAwaiting && !ttsSpeaking) {
-          setTimeout(() => { try { rec.start(); } catch(_){} }, 260);
+          scheduleVoiceChatRestart(VOICE_RESUME_DELAY_MS);
         }
         return;
       }
@@ -2992,7 +3012,7 @@ pingGeminiHealth();
       setVoiceChatStatus('語音辨識暫時不穩定，請再試一次。', '#e05050');
       $('sttStatus').textContent = '語音辨識暫時不穩定，請再試一次。';
       if (voiceChatActive && !voiceChatAwaiting && !ttsSpeaking) {
-        setTimeout(() => { try { rec.start(); } catch(_){} }, 320);
+        scheduleVoiceChatRestart(VOICE_RESUME_DELAY_MS);
       }
     };
     rec.onresult = async ev => {
@@ -3002,6 +3022,7 @@ pingGeminiHealth();
         ev.results[i].isFinal ? fin += t : interim += t;
       }
       $('sttInterim').textContent = interim.trim();
+      if(Date.now() < voiceEchoGuardUntil) return;
       if(fin.trim() && !voiceChatBusy){
         const question = fin.trim();
         pushFrontConversationLog('user', question);
@@ -3016,7 +3037,6 @@ pingGeminiHealth();
         setReply('Gemini 回答中…');
         setVoiceChatStatus('Gemini 回答中…', 'var(--gold-light)');
         try{
-          const autoSpeak = true;
           const data = await requestGemini(question, {mode:'voice_chat', reason:'voice_chat_turn', concise:false, voiceChat:true, withAudio:true, voiceName:'Leda'});
           const replyText = formatGeminiReply(`【語音提問】${question}`, data);
           setReply(replyText);
@@ -3032,7 +3052,7 @@ pingGeminiHealth();
           setReply(msg);
           pushFrontConversationLog('assistant', msg);
           setVoiceChatStatus('Gemini 對話失敗', '#e05050');
-          if(voiceChatActive){ setTimeout(() => { try { rec.start(); } catch(_){} }, 320); }
+          if(voiceChatActive){ scheduleVoiceChatRestart(VOICE_RESUME_DELAY_MS); }
         } finally {
           voiceChatBusy = false;
           updateVoiceButtons();
@@ -3043,6 +3063,7 @@ pingGeminiHealth();
   }
 
   function stopVoiceChat(stopSpeechToo=true){
+    clearVoiceRestartTimer();
     voiceChatActive = false;
     voiceChatBusy = false;
     voiceChatAwaiting = false;
@@ -3066,6 +3087,7 @@ pingGeminiHealth();
     if(!voiceChatRec){ setVoiceChatStatus('此瀏覽器不支援語音辨識', '#e05050'); return; }
     voiceChatActive = true;
     voiceChatAwaiting = false;
+    voiceEchoGuardUntil = 0;
     setVoiceChatStatus('正在啟動語音對話…', 'var(--gold-light)');
     updateVoiceButtons();
     try{ voiceChatRec.lang = $('sttLang')?.value || 'zh-TW'; voiceChatRec.start(); }catch(err){
