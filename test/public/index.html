@@ -1418,6 +1418,14 @@
       $('btn-reading-demo').onclick = async () => {
         await unlockAudioPlayback();
         const poem = state.readingPoemOptions.find(p => poemKey(p) === state.readingSelectedKey) || state.activePoem || state.activePoemByMode.ask || state.activePoemByMode.image || state.activePoemByMode.emotion;
+        const playedInEngine = await withEngine((eng) => {
+          if (typeof eng.speakPoem === 'function' && poem?.content) {
+            eng.speakPoem(poem);
+            return true;
+          }
+          return false;
+        });
+        if (playedInEngine) return;
         if (poem?.content) speakText(poem.content);
         else speakText('床前明月光，疑是地上霜。舉頭望明月，低頭思故鄉。');
       };
